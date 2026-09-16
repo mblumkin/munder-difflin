@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, powerMonitor, powerSaveBlocker, screen, shell, Notification } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, powerMonitor, powerSaveBlocker, screen, shell, Notification, type MessageBoxOptions } from 'electron';
 import { spawn } from 'node:child_process';
 import {
   rmSync, existsSync, readFileSync, readdirSync, statSync, cpSync, writeFileSync,
@@ -5325,6 +5325,27 @@ app.whenReady().then(() => {
   // off, the app keeps Electron's default menu — zero behavior change.
   if (readConfig().multiWindow) installAppMenu();
   createWindow();
+  // AEON-1542: safeStorage encrypts the file at rest, but this packaged app has
+  // no provisioned, code-identity-bound Keychain access group. Do not silently
+  // imply that stored integration/provider credentials are isolated from other
+  // processes running as the same macOS user. The warning repeats on startup
+  // while any secret remains, so acknowledgement cannot become stale policy.
+  const secretBoundaryWarning = integrations.startupSecretBoundaryWarning();
+  if (secretBoundaryWarning) {
+    console.warn('[security] integration secret boundary:', secretBoundaryWarning);
+    const warningOptions: MessageBoxOptions = {
+      type: 'warning',
+      title: 'Local credential isolation warning',
+      message: 'Stored integration credentials are not isolated from local processes',
+      detail: secretBoundaryWarning,
+      buttons: ['I understand'],
+      defaultId: 0,
+      noLink: true
+    };
+    void (mainWindow
+      ? dialog.showMessageBox(mainWindow, warningOptions)
+      : dialog.showMessageBox(warningOptions));
+  }
   // Auto-start the Slack webhook server when configured. Best-effort: a tunnel
   // failure (offline) is logged, not fatal. The tunnel URL is ephemeral and
   // changes per restart, so the user re-pastes it via Settings → Start.
