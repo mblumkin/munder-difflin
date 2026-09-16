@@ -6,6 +6,50 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.5.6] — 2026-09-16 (local-only, not a public release)
+
+This build reunifies the local production line with the owned fork's current
+`main`, so router reliability work and the 0.5.5 safety features now ship from
+one line.
+
+### Fixed
+
+- **Hive commits stage the paths their caller actually changed.** Rapid adjacent
+  writes no longer blur across commit messages, while the serialized async Git
+  queue and maintenance GC retain their shutdown-safety guarantees.
+- **Slow or backed-up hive commits leave a diagnostic.** The commit-latency
+  watchdog covers both Git execution and time spent waiting in the single-writer
+  queue, with a best-effort process sample for post-mortem evidence.
+- **Cancelling Closing Time retracts delivered shutdown guidance.** Workers that
+  already received the shutdown steer get a same-channel superseding instruction.
+
+### Security
+
+- **macOS warns while stored integration credentials lack code-identity
+  isolation.** Safe Storage still encrypts at rest; the warning makes the
+  remaining same-user-process boundary explicit.
+
+## [0.5.5] — 2026-09-16 (local-only, not a public release)
+
+Local maintenance build on the rebased 0.5.4 production lineage, now reconciled
+with the current public `main` history.
+
+### Fixed
+
+- **Cancelling Closing Time retracts its delivered steer.** The app clears any
+  shutdown notes still queued and sends every original target a same-channel,
+  provider-neutral superseding instruction, so an agent that already received
+  the shutdown directive is not permanently stranded.
+
+### Security
+
+- **Stored integration credentials no longer imply a false process boundary.**
+  On macOS, the app warns at every startup while integration or provider secrets
+  exist: Safe Storage encrypts them at rest, but this build does not bind
+  Keychain access to Munder Difflin's code identity. `SECURITY.md` records the
+  same-user local-process threat and the signed access-group route App Owners
+  must choose for cryptographic isolation.
+
 ## [0.5.4] — 2026-09-13 (local-only, not a public release)
 
 Local-only maintenance build off the real production lineage

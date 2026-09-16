@@ -1,5 +1,5 @@
-- **The interface speaks Chinese and Arabic.** Set it in Settings.
-- **Updates install themselves.** Download, restart, done.
-- **Fonts ship inside the app.** No Google Fonts fetch on launch.
-- **Hardened how engine commands launch.**
-- **Settings has one Save button.** Connections get their own tab.
+- **Hive commits now stage only the files each operation changed.**
+- **Slow and queue-backed commits emit a watchdog diagnostic.**
+- **Closing Time cancellation retracts delivered shutdown guidance.**
+- **macOS warns when stored credentials lack code-identity isolation.**
+- **The local production build now ships from the owned fork's current main line.**
