@@ -268,16 +268,31 @@ test('round 5: a slow maintenance gc is killed by shutdown exactly like any othe
   // schedules the gc, which starts hanging via the heartbeat script.
   hive.ensureHive();
 
-  // Poll for the gc to actually start rather than guessing a fixed delay —
-  // it's enqueued from INSIDE the init commit's own closure, one queue turn
-  // after the commit itself, so a single `setImmediate` isn't guaranteed
-  // enough ticks.
+  // AEON-1584: this poll already looked like a wait-for-start and was really a 500ms budget
+  // (50 iterations x 10ms) racing the spawn. Under a busy floor the gc had simply not been
+  // spawned yet when the budget ran out, so the test reported "the maintenance gc must have
+  // actually started" — an assertion about the PRODUCT — for what was actually the harness
+  // running out of patience. Measured 1/6 on an untouched fork main under 10 CPU spinners,
+  // ~2/3 on a busy floor.
+  //
+  // The fix is not a bigger number: widening 500ms to 5000ms would still be a calibration, and
+  // the next busier machine reopens it. What changed is what the bound MEANS. Below, the wait
+  // ends the moment the event is observed, and its ceiling exists only to turn a genuine
+  // never-starts into a reported failure instead of a hang. It is deliberately far outside any
+  // plausible scheduling delay, so crossing it is evidence of a real defect rather than a
+  // slow machine — and the message reports the elapsed time, so a near-miss is visible rather
+  // than being rounded off to a flat "did not start".
+  const GC_START_CEILING_MS = 30_000; // liveness bound, NOT a calibration — see above
+  const waitedFrom = Date.now();
   let sawStart = false;
-  for (let i = 0; i < 50 && !sawStart; i++) {
+  while (!sawStart && Date.now() - waitedFrom < GC_START_CEILING_MS) {
     if (fs.readFileSync(logPath, 'utf8').includes('gc')) sawStart = true;
     else await new Promise((r) => setTimeout(r, 10));
   }
-  assert.ok(sawStart, 'the maintenance gc must have actually started');
+  const waitedMs = Date.now() - waitedFrom;
+  assert.ok(sawStart,
+    `the maintenance gc must have actually started — nothing appeared in the phase log after ${waitedMs}ms ` +
+    `(ceiling ${GC_START_CEILING_MS}ms). At this bound the gc genuinely never spawned; this is not a slow machine.`);
   const killedPid = hive.currentGitPid;
   assert.ok(killedPid, 'the running gc must be trackable via currentGitPid — the whole point of routing it through git()');
 
