@@ -36,3 +36,20 @@ credit you (unless you prefer to stay anonymous).
   rooted at an agent's working directory.
 - The hive commits to a local git repo from a **single committer** (the main process);
   agents only write plain files.
+
+### Integration and provider credentials on macOS
+
+`integration-secrets.json` is encrypted at rest with Electron `safeStorage`; secret
+values are never returned to the renderer. That does **not** currently establish a
+code-identity boundary against another process running as the same macOS user. In the
+current packaged build, a separate Electron process can claim the same application name
+and reach the same Safe Storage keychain material. Treat stored integration credentials
+as available to local agents and other same-user processes.
+
+When stored secrets are present, Munder Difflin warns at every macOS startup. The warning
+is removed only when no secrets remain. A stronger boundary requires an App Owner release
+decision: sign with a stable Apple Team identity and provisioning profile, store secrets
+in a Data Protection Keychain access group authorized for that identity, migrate existing
+Safe Storage values, and verify upgrade/key-rotation behavior. Electron `safeStorage`
+does not expose an API for selecting that access group, so this must not be approximated
+with an application-name check or another key stored beside the ciphertext.

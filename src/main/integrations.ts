@@ -26,6 +26,7 @@ import {
   secretRefFor
 } from '../shared/integrations';
 import { readConfig, writeConfig } from './config';
+import { integrationSecretRiskWarning } from './integrationSecretRisk';
 
 // ─── Registry (config-backed) ────────────────────────────────────────────────
 
@@ -94,6 +95,17 @@ function readSecretBlob(): Record<string, string> {
   } catch {
     return {};
   }
+}
+
+/** A startup-only threat-model warning. This intentionally reports presence,
+ * never refs or plaintext. Electron safeStorage has no API for selecting a
+ * code-signing requirement or Keychain access group; until the packaged app
+ * has an App-Owner-provisioned identity boundary, macOS same-user processes
+ * are outside the confidentiality claim. */
+export function startupSecretBoundaryWarning(
+  platform: NodeJS.Platform = process.platform
+): string | undefined {
+  return integrationSecretRiskWarning(platform, Object.keys(readSecretBlob()).length);
 }
 
 function writeSecretBlob(blob: Record<string, string>): void {
