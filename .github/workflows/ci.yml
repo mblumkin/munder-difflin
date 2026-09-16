@@ -24,7 +24,18 @@ jobs:
       # match package.json. A version left behind in RELEASE.md / docs turns the
       # download buttons into 404s the moment the next release ships — this catches
       # it on the release branch, before a tag, instead of on launch day.
+      #
+      # AEON-1580: scoped to the repo that actually cuts releases. This check's premise
+      # is "package.json's version is the version we are about to publish". That holds
+      # here and is false on a fork used as a private development line, where
+      # package.json tracks local builds that are never published — mblumkin's fork sat
+      # at 0.5.4 (a local-only, arm64-only build, see CHANGELOG and PRODUCTION-BASE.md)
+      # against release docs written for the public line, and failed this step on every
+      # PR for a tree where both sides were individually correct. Scoping the premise is
+      # the fix; renumbering a dev line to satisfy a release gate would not be. Nothing
+      # is relaxed upstream, and `npm run check:links` stays runnable by hand anywhere.
       - name: Release links consistent
+        if: github.repository == 'chaitanyagiri/munder-difflin'
         run: npm run check:links
 
   build:
