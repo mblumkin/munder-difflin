@@ -1,5 +1,5 @@
-- **Hive commits now stage only the files each operation changed.**
+- **Hive commits stage only the files an operation changed.**
 - **Slow and queue-backed commits emit a watchdog diagnostic.**
-- **Closing Time cancellation retracts delivered shutdown guidance.**
-- **macOS warns when stored credentials lack code-identity isolation.**
-- **The local production build now ships from the owned fork's current main line.**
+- **Closing Time cancellation retracts sent shutdown guidance.**
+- **macOS warns when credentials lack code-identity isolation.**
+- **The local build ships from the fork's main line.**
