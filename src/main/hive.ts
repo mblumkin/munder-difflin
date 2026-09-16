@@ -3093,37 +3093,20 @@ export class HiveManager {
 
   // — periodic maintenance gc (AEON-1493-for-0.5.2) —
   //
-  // The freeze this fixes is NOT the routine `add`+`commit` above — those are
-  // small and fast. It is `gc.autoDetach=false` in `git()`'s flags: once the
-  // repo crosses git's `gc.auto` loose-object threshold (default 6700), THAT
-  // flag makes the resulting `git gc --auto` run inline inside the same
-  // blocking `spawnSync`, freezing the whole Electron main process for as
-  // long as the repack takes — measured on a real hive at ~700MB of loose
-  // objects (AEON-1507/1488).
+  // The original freeze was not routine `add`+`commit`; it was inline auto-gc
+  // after the repo crossed Git's loose-object threshold. The first async
+  // experiment exposed a second problem: synchronous callers and fixtures
+  // removed their temp trees while fire-and-forget commits were still live,
+  // producing ENOTEMPTY races and repeated "[hive] commit gave up" warnings.
   //
-  // A full async rewrite of `commit()`/`git()` was tried first and reverted:
-  // 8 of the 9 call sites into `commit()` are synchronous, void-or-value-
-  // returning methods (`ensureHive`, `patchAgentRole`, `setArchived`,
-  // `renameAgent`, `recordSession`, `drainForStop`, `routeOnce`,
-  // `writeTasks`) whose callers — including every existing hive-*.test.cjs
-  // fixture, which tears its temp home down via `t.after` the instant its
-  // test function's promise resolves — depend on the commit having already
-  // landed by the time the call returns. Making `commit()` fire-and-forget
-  // broke that contract and reintroduced a variant of the exact ENOTEMPTY-
-  // shaped race `gc.autoDetach=false` exists to prevent (this time between
-  // the test's own cleanup and a commit still in flight): confirmed by
-  // running the existing hive-*.test.cjs suite against both versions from an
-  // identical starting point — 0 "[hive] commit gave up" warnings on
-  // unmodified 0.5.2, 50 across the same 10 files with the async rewrite.
-  //
-  // This fix instead attacks the trigger condition directly: keep the repo's
-  // loose-object count far under the `gc.auto` threshold continuously, so the
-  // inline auto-gc inside the synchronous commit path has nothing to do and
-  // essentially never fires. The periodic gc runs via `spawn` (not
-  // `spawnSync`), detached and unref'd, on a cadence with no relationship to
-  // any single commit's caller or any test's lifecycle — nothing is ever
-  // waiting on it, so it cannot race a directory removal the way a
-  // commit-coupled background gc could.
+  // The production design now composes both fixes. `commit()` is async and
+  // serialized through `gitQueue`, while lifecycle boundaries explicitly use
+  // `flushGit()`/`flushGitBeforeQuit()` before cleanup or exit. Successful
+  // commits call this cadence hook; maintenance gc is enqueued onto that SAME
+  // queue through `git()` rather than detached beside it. Thus commits and gc
+  // cannot overlap, shutdown can cancel/reap either one, and `flushGit()` loops
+  // until work enqueued by an in-flight commit (including gc) is also drained.
+  // The hive tests likewise flush before deleting their fixture homes.
   //
   // KNOWN CEILING: plain `git gc` (what this runs) only packs REACHABLE loose
   // objects — by design it leaves unreachable ones (dangling trees/blobs/
