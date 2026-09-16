@@ -156,6 +156,16 @@ export class ClosingTimeController {
     // Agents that already saw the note get corrected via the god (below).
     this.control?.clearSteers(this.godId);
     for (const id of this.workers) this.control?.clearSteers(id);
+    // A clear can retract only notes that are still queued. Once a hook has
+    // returned the closing-time steer, that instruction already lives in the
+    // agent's context and clearing our queue cannot reach it. Supersede it on
+    // the same hook channel, at the same authority, for every original target.
+    // This is deliberately provider-neutral: no session is expected to infer
+    // cancellation from app state or from another agent's inbox message.
+    const retraction =
+      'CLOSING TIME RETRACTED by the human. This newer instruction supersedes the earlier shutdown steer. Resume normal operation and accept new work; do not continue the closing-time protocol.';
+    this.control?.steer(this.godId, retraction);
+    for (const id of this.workers) this.control?.steer(id, retraction);
     this.emitState('cancelled');
     try {
       this.hive.send({
