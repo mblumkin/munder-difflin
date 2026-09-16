@@ -25,9 +25,10 @@ import {
 } from 'node:fs';
 import { join, dirname, basename, isAbsolute, relative } from 'node:path';
 import { homedir } from 'node:os';
-import { spawnSync, spawn, type ChildProcess } from 'node:child_process';
+import { spawn, execFile, type ChildProcess } from 'node:child_process';
 import { randomBytes, createHash } from 'node:crypto';
 import type { AgentUsageSample } from './usage';
+import { hardKillTree, KILL_GRACE_MS } from './procKill';
 import { COMMAND_GROUPS } from '../shared/claudeCommands';
 import {
   isClaudeProvider,
@@ -191,9 +192,8 @@ export interface SpawnInjection {
 
 const HOP_CAP = 12;
 
-function sleepSync(ms: number): void {
-  const sab = new SharedArrayBuffer(4);
-  Atomics.wait(new Int32Array(sab), 0, 0, ms);
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /** Filesystem- and sort-safe timestamp, e.g. 2026-05-30T14-03-11-123Z. */
@@ -357,7 +357,15 @@ export class HiveManager {
    */
   constructor(
     private getHome: () => string | null,
-    private emit?: (channel: string, payload: unknown) => boolean | void
+    private emit?: (channel: string, payload: unknown) => boolean | void,
+    // Test-only seam (AEON-1493-for-0.5.2): lets a test drive the maintenance-gc
+    // cadence with a small, controllable count instead of waiting on real
+    // commit volume. Never set in production. `spawnGc` (AEON-1523 round 5)
+    // is gone — the gc now routes through `git()`/`gitQueue` like every
+    // other git-touching operation (see `maybeScheduleMaintenanceGc`'s doc
+    // comment), so a test drives the SAME `gitBin` override every other
+    // git()-based test uses instead of injecting a fake spawn function here.
+    private maintenanceGcOptions?: { everyCommits?: number }
   ) {}
 
   private routerTimer: NodeJS.Timeout | null = null;
@@ -624,7 +632,10 @@ export class HiveManager {
     // can include tokens, paths and prompt fragments, and the hive repo is
     // committed on every change — a secret written there would be permanent.
     // log.jsonl gets the structured, non-sensitive fields; the dump stays local.
-    const want = ['fleet.json', 'hooks.sock', 'cost-ledger.jsonl', 'crashes/', '.DS_Store'];
+    // `diagnostics/` (AEON-1487) holds `sample` captures taken on a commit-latency
+    // breach — same reasoning as crashes/: a raw process sample, not structured
+    // data, stays local rather than becoming permanent hive-repo history.
+    const want = ['fleet.json', 'hooks.sock', 'cost-ledger.jsonl', 'crashes/', 'diagnostics/', '.DS_Store'];
     let lines: string[] = [];
     if (existsSync(gitignore)) { try { lines = readFileSync(gitignore, 'utf8').split('\n'); } catch { lines = []; } }
     const missing = want.filter((w) => !lines.includes(w));
@@ -642,9 +653,16 @@ export class HiveManager {
     // …and the PATH-visible `node` fallback for the agent's OWN subprocesses.
     this.writeRuntimeShims();
 
+    // Queued (not `this.commit()`) so the init and its first commit land as
+    // ONE atomic slot ahead of anything else — ensureHive() runs synchronously
+    // at the top of every write-path method, so this enqueue always reaches
+    // the queue before any commit() those methods call further down, and
+    // `git init` is guaranteed to finish before the tree is ever `add -A`ed.
     if (!existsSync(join(root, '.git'))) {
-      this.git(['init', '-q'], root);
-      this.commit('hive: init');
+      this.enqueueGit(async () => {
+        await this.git(['init', '-q'], root);
+        await this.doCommit('hive: init');
+      });
     }
   }
 
@@ -760,6 +778,19 @@ export class HiveManager {
     if (!cwd.valid) {
       this.appendLog({ kind: 'cwd_invalid', agentId: meta.id, cwd: meta.cwd, issue: cwd.issue });
     }
+    // AEON-1522: deliberately left on `-A` (no `paths` argument), not migrated with the other
+    // 6 call sites. This method also conditionally writes memory.md/cursor.json and copies an
+    // entire bundled-skills directory tree (copyBundledSkills, above) — enumerating that
+    // exactly is real, disproportionate risk (a missed path here silently never commits) for
+    // a call site that fires once per agent spawn, not the rapid-burst shape this card exists
+    // to fix. Round 2 (Dwight's review, 2026-09-14): after migrating the other 6, this `-A`
+    // and `hive: init`'s (ensureHive, once ever) are the only two left in the whole file —
+    // this is NOT a relied-upon general sweeper for anything the migrated sites might miss
+    // (each of those now gates its own commit on its own write-set — see `routeOnce`'s and
+    // `send()`'s own doc comments, round 3 same review), just this one method's own honest
+    // scope-out. Don't "finish the job"
+    // by narrowing this one too without first re-deriving that no other path has come to
+    // depend on it catching something.
     this.commit(`hive: register ${meta.id}`);
 
     const env: Record<string, string> = {
@@ -983,9 +1014,10 @@ export class HiveManager {
       agent.role = next;
       agent.lastSeen = Date.now();
       this.writeJson(join(root, 'registry.json'), reg);
-      writeFileSync(join(this.agentDir(id), 'identity.md'), this.identityText(agent), 'utf8');
+      const identityPath = join(this.agentDir(id), 'identity.md');
+      writeFileSync(identityPath, this.identityText(agent), 'utf8');
       this.appendLog({ kind: 'role', agentId: id, role: next });
-      this.commit(`hive: role ${id}`);
+      this.commit(`hive: role ${id}`, [join(root, 'registry.json'), identityPath]);
       return { ok: true };
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : String(e) };
@@ -1009,7 +1041,7 @@ export class HiveManager {
       agent.lastSeen = Date.now();
       this.atomicWriteJson(join(root, 'registry.json'), reg);
       this.appendLog({ kind: 'archive', agentId: id, archived });
-      this.commit(`hive: ${archived ? 'archive' : 'unarchive'} ${id}`);
+      this.commit(`hive: ${archived ? 'archive' : 'unarchive'} ${id}`, [join(root, 'registry.json')]);
     } catch { /* best-effort — never crash a lifecycle handler */ }
   }
 
@@ -1074,6 +1106,7 @@ export class HiveManager {
       const previousName = agent.name;
       agent.name = nextName;
       this.writeJson(join(root, 'registry.json'), reg);
+      const paths = [join(root, 'registry.json')];
 
       // fleet.json is ephemeral and may not exist yet. When it does, keep its
       // display name in lockstep with the registry so rosterContext() is fresh.
@@ -1086,13 +1119,14 @@ export class HiveManager {
             if (row) {
               row.name = nextName;
               this.writeJson(fleetPath, fleet);
+              paths.push(fleetPath);
             }
           }
         } catch { /* periodic snapshot will repair a malformed/stale fleet file */ }
       }
 
       this.appendLog({ kind: 'rename', agentId: id, previousName, name: nextName });
-      this.commit(`hive: rename ${id}`);
+      this.commit(`hive: rename ${id}`, paths);
       return { ok: true, name: nextName };
     } catch {
       return { ok: false, error: 'Could not rename agent' };
@@ -1117,7 +1151,7 @@ export class HiveManager {
       agent.lastSeen = Date.now();
       this.atomicWriteJson(join(root, 'registry.json'), reg);
       this.appendLog({ kind: 'session', agentId, sessionId });
-      this.commit(`hive: session ${agentId}`);
+      this.commit(`hive: session ${agentId}`, [join(root, 'registry.json')]);
     } catch { /* best-effort — never crash a hook handler */ }
   }
 
@@ -1537,7 +1571,21 @@ export class HiveManager {
 
   /** Atomically deliver a message into a recipient agent's inbox.
    *  Returns false when the recipient has no inbox, so the caller can bounce and
-   *  log the drop rather than let the message vanish. */
+   *  log the drop rather than let the message vanish.
+   *
+   *  AEON-1522 round 3 (Dwight's review, 2026-09-14): this used to also collect
+   *  the delivered path into a `written` accumulator so `routeMessage`'s callers
+   *  could pass `commit()` a precise pathspec — REMOVED. Every path this method
+   *  ever writes lives under `agents/<id>/inbox/`, which `ensureMineIgnore` puts
+   *  in that agent's own `.gitignore` (`MINE_IGNORE_LINES`) for every real agent
+   *  — so the path was NEVER a valid `git add` target in production. Confirmed
+   *  live on the real hive (`git check-ignore -v agents/.../inbox/x.json`), not
+   *  inferred: `git add` on an EXISTING-but-ignored path is refused, and relying
+   *  on a given git version's partial-staging-with-warning behavior to still
+   *  land the OTHER paths in the same call is not a safe design. The fixture
+   *  tests that built agent directories by hand (skipping `ensureAgent`/
+   *  `ensureMineIgnore`) never exercised the ignored-tree case at all — see
+   *  `send()`/`routeOnce()`'s own doc comments for the fix. */
   private deliver(msg: HiveMessage, toId: string): boolean {
     const inbox = join(this.agentDir(toId), 'inbox');
     if (!existsSync(inbox)) return false; // unknown recipient — the caller reports it
@@ -1549,7 +1597,13 @@ export class HiveManager {
   send(partial: Partial<HiveMessage>, from = 'system'): HiveMessage {
     const msg = this.normalize(partial, from);
     this.routeMessage(msg);
-    this.commit(`hive: msg ${msg.from}→${msg.to} (${msg.act})`);
+    // AEON-1522 round 3: `[]`, not omitted — `routeMessage` ALWAYS calls
+    // `appendLog` somewhere in its own body (the hop-cap drop and the normal
+    // path both do, unconditionally), so `log.jsonl` always has something
+    // new; nothing else this call ever touches (every `deliver()` target) is
+    // a valid git path (see `deliver`'s own doc comment). An explicit `[]`
+    // scopes this to exactly `log.jsonl`, never `-A`.
+    this.commit(`hive: msg ${msg.from}→${msg.to} (${msg.act})`, []);
     return msg;
   }
 
@@ -1712,9 +1766,37 @@ export class HiveManager {
     const agentsDir = join(root, 'agents');
     if (!existsSync(agentsDir)) return 0;
     let routed = 0;
+    // AEON-1522 round 3 (Dwight's review, 2026-09-14): this used to be a `written: string[]`
+    // pathspec accumulator (every routeMessage delivery + every outbox rename's source and
+    // `.sent` destination), gated on `written.length > 0` instead of `routed > 0` — round 2's
+    // fix for the real gap that `routed` misses the quarantine-only paths. But EVERY path that
+    // accumulator ever collected lives under `agents/<id>/inbox/` or `.../outbox/` — both
+    // gitignored by design in every real agent's own `.gitignore` (`ensureMineIgnore`,
+    // `MINE_IGNORE_LINES`) — so passing them to `git add` was never valid in production at
+    // all. Confirmed live on the real hive, not inferred: `git check-ignore -v` on a real
+    // agent's outbox file. `git add` on an EXISTING-but-ignored path is refused (this box's
+    // git 2.39 partially stages the rest and warns; do not rely on that being every git
+    // version's behavior). Replaced the whole accumulator with a plain boolean: the only path
+    // ANY of this ever needs to commit is `log.jsonl` (see `commit()`'s own doc comment on the
+    // two-signal `paths` contract) — `didWork` tracks whether this pass touched the
+    // filesystem at all (routing or quarantining), and `[]` scopes the resulting commit to
+    // exactly that file, on purpose, never `-A`.
+    let didWork = false;
     for (const id of readdirSync(agentsDir)) {
       const outbox = join(agentsDir, id, 'outbox');
       if (!existsSync(outbox)) continue;
+      // AEON-1522 round 3, non-blocking note (Dwight's review, 2026-09-14): `ensureMineIgnore`
+      // normally runs on the spawn path, so a dir that predates it (e.g. from before this
+      // codebase added the ignore lines) could have its outbox genuinely tracked by git —
+      // before this card, an unrelated `-A` would sweep its `.sent/` renames; now they'd sit
+      // uncommitted with nothing to catch them. Idempotent and cheap enough to call every
+      // pass rather than assume the premise this loop depends on. AFTER the outbox check
+      // (Dwight's follow-up verification, same review): `readdirSync(agentsDir)` can name a
+      // stray non-directory entry (`.DS_Store` is near-certain on macOS) — calling this
+      // before the guard ran it on every such entry too, every pass, each one failing
+      // `join(file, '.gitignore')` with ENOTDIR into the best-effort catch. Harmless (nothing
+      // escapes) but pure noise; the outbox check already filters strays out for free.
+      ensureMineIgnore(join(agentsDir, id));
       for (const f of readdirSync(outbox)) {
         if (!f.endsWith('.json')) continue;
         const full = join(outbox, f);
@@ -1727,6 +1809,7 @@ export class HiveManager {
             const repaired = repairLiteralLineBreaksInJsonStrings(raw);
             if (!repaired.changed) {
               this.appendLog({ kind: 'drop', reason: 'malformed-json', from: id, file: f });
+              didWork = true;
               try { renameSync(full, join(outbox, '.sent', `bad-${f}`)); } catch { /* noop */ }
               continue;
             }
@@ -1734,6 +1817,7 @@ export class HiveManager {
               partial = JSON.parse(repaired.text) as Partial<HiveMessage>;
             } catch {
               this.appendLog({ kind: 'drop', reason: 'malformed-json', from: id, file: f });
+              didWork = true;
               try { renameSync(full, join(outbox, '.sent', `bad-${f}`)); } catch { /* noop */ }
               continue;
             }
@@ -1748,14 +1832,16 @@ export class HiveManager {
           msg.from = id; // sender is authoritative — the owning directory
           this.routeMessage(msg);
           renameSync(full, join(outbox, '.sent', f)); // archive, don't reprocess
+          didWork = true;
           routed++;
         } catch {
           // malformed file — quarantine so we don't spin on it
+          didWork = true;
           try { renameSync(full, join(outbox, '.sent', `bad-${f}`)); } catch { /* noop */ }
         }
       }
     }
-    if (routed > 0) this.commit(`hive: routed ${routed} message(s)`);
+    if (didWork) this.commit(`hive: routed ${routed} message(s)`, []);
     return routed;
   }
 
@@ -1797,7 +1883,7 @@ export class HiveManager {
     const merged = mergeTaskLedger(current?.tasks, tasks);
     this.writeJson(path, { tasks: merged });
     this.appendLog({ kind: 'tasks', count: merged.length });
-    this.commit(`hive: tasks (${merged.length})`);
+    this.commit(`hive: tasks (${merged.length})`, [path]);
   }
 
   /** Append one card against the latest on-disk ledger. Renderer callers must
@@ -2679,11 +2765,106 @@ export class HiveManager {
   //
   // The gc still happens — this only stops it from outliving the command that
   // triggered it, which is what "single committer" was supposed to mean.
-  private git(args: string[], cwd: string): { ok: boolean; out: string; err: string } {
-    const res = spawnSync('git', ['-c', 'commit.gpgsign=false', '-c', 'gc.autoDetach=false', '-c', 'user.name=Hive', '-c', 'user.email=hive@local', ...args], {
-      cwd, encoding: 'utf8', timeout: 8000
+  // Overridable like `bin()` in memory.ts — tests substitute all three to
+  // drive a real (fake) child through the timeout/escalation path without
+  // waiting 8 real seconds.
+  private gitBin = 'git';
+  private gitTimeoutMs = 8000;
+  private gitKillGraceMs = KILL_GRACE_MS;
+
+  /** Async so the main thread keeps breathing during `add -A`/`gc` on a large
+   *  tree (AEON-1510) — same args/cwd/timeout/result shape as the old
+   *  `spawnSync` call, so nothing downstream needed to change except `await`.
+   *
+   *  Pam's round-1 review of this conversion (2026-09-14) found the timeout
+   *  path broke `gitQueue`'s single-writer guarantee at exactly its failure
+   *  boundary: it used to settle the promise the instant SIGTERM was SENT,
+   *  not once the process actually closed — `enqueueGit` chains the next
+   *  queued operation onto that same promise, so a process that delays or
+   *  ignores SIGTERM (or its own inline `gc.autoDetach=false` child) could
+   *  still be touching `.git/objects` while the NEXT queued git process
+   *  starts. Fixed: the timeout only REQUESTS termination and arms a bounded
+   *  escalation (SIGKILL the whole tree via `hardKillTree`, not just the
+   *  leader — same `detached: true` + group-kill pattern as AEON-1513's mine
+   *  watchdog, so an ignored SIGTERM can never wedge the queue forever); the
+   *  promise itself only settles on the process's real `close` event. */
+  // AEON-1523 round 3 (Pam's shutdown-boundary review, 2026-09-14): tracks
+  // whichever git process is CURRENTLY running so a shutdown sequence that
+  // gives up waiting can also reach in and kill it, rather than merely
+  // stopping the WAIT for it. `enqueueGit` strictly serializes every call
+  // through here, so at most one is ever in flight — a single pid/promise
+  // pair, not a map, is correct, not a simplification that happens to work.
+  private currentGitPid: number | null = null;
+  private currentGitClosed: Promise<void> = Promise.resolve();
+
+  /** Round 4 of the same review (still 2026-09-14): `gitShuttingDown` being
+   *  checked only in `enqueueGit` was the wrong layer — `doCommit()` makes
+   *  several SEQUENTIAL `git()` calls inside one already-admitted queue link
+   *  (untrack probes/removals, `add -A`, `commit`, retries), so a shutdown
+   *  that killed an EARLY one (say `add -A`) let `doCommit` carry on and
+   *  spawn its NEXT one (`commit`) past the latch — a second, untracked
+   *  detached child, overwriting `currentGitPid`/`currentGitClosed` out from
+   *  under the shutdown sequence already awaiting the FIRST one. Same lesson
+   *  as the queue latch, applied recursively: a cancellation boundary has to
+   *  hold at the CHOKE POINT every caller routes through, not at whichever
+   *  outer layer happened to get a check first. `git()` itself — not
+   *  `enqueueGit`, not `doCommit` — is that point: EVERY spawn, from every
+   *  caller, passes through here. */
+  private static readonly GIT_SHUTDOWN_ERROR = 'git: shutting down, refusing to spawn a new process';
+
+  private git(args: string[], cwd: string): Promise<{ ok: boolean; out: string; err: string }> {
+    if (this.gitShuttingDown) {
+      return Promise.reject(new Error(HiveManager.GIT_SHUTDOWN_ERROR));
+    }
+    return new Promise((resolve) => {
+      let proc: ChildProcess;
+      try {
+        proc = spawn(this.gitBin, ['-c', 'commit.gpgsign=false', '-c', 'gc.autoDetach=false', '-c', 'user.name=Hive', '-c', 'user.email=hive@local', ...args], { cwd, detached: true });
+      } catch (e) {
+        resolve({ ok: false, out: '', err: e instanceof Error ? e.message : String(e) });
+        return;
+      }
+      this.currentGitPid = proc.pid ?? null;
+      let resolveClosed: () => void = () => {};
+      this.currentGitClosed = new Promise((r) => { resolveClosed = r; });
+      let out = '', err = '';
+      let settled = false;
+      let timedOut = false;
+      let escalation: NodeJS.Timeout | null = null;
+      const settle = (r: { ok: boolean; out: string; err: string }): void => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          if (escalation) clearTimeout(escalation);
+          this.currentGitPid = null;
+          resolveClosed();
+          resolve(r);
+        }
+      };
+      proc.stdout?.setEncoding('utf8');
+      proc.stderr?.setEncoding('utf8');
+      proc.stdout?.on('data', (d: string) => { out += d; });
+      proc.stderr?.on('data', (d: string) => { err += d; });
+      const timer = setTimeout(() => {
+        timedOut = true;
+        try { proc.kill('SIGTERM'); } catch { /* gone */ }
+        // Bounded escalation, not a fire-and-forget sweep: escalation fires
+        // at this grace deadline, and `close` is awaited afterward — SIGKILL
+        // is unignorable, so the queue can never wedge on a process that
+        // eats SIGTERM.
+        escalation = setTimeout(() => {
+          if (proc.pid) hardKillTree(proc.pid);
+        }, this.gitKillGraceMs);
+        escalation.unref?.();
+        // Deliberately NOT settling here — wait for the real `close` below.
+      }, this.gitTimeoutMs);
+      timer.unref?.();
+      proc.on('close', (code) => {
+        if (timedOut) { settle({ ok: false, out, err: err || 'git timed out' }); return; }
+        settle({ ok: code === 0, out, err });
+      });
+      proc.on('error', (e) => settle({ ok: false, out: '', err: e.message }));
     });
-    return { ok: res.status === 0, out: res.stdout ?? '', err: res.stderr ?? '' };
   }
 
   /** Has the one-time cost-ledger untrack pass run in this process yet? */
@@ -2703,14 +2884,14 @@ export class HiveManager {
    * line alone reads as a fix while the repo goes on growing. The ledger stays
    * on disk, so the cost history the app reads is untouched.
    */
-  private untrackCostLedger(root: string): void {
+  private async untrackCostLedger(root: string): Promise<void> {
     if (this.untrackedCostLedger) return;
     this.untrackedCostLedger = true;
     // Probe before mutating: `rm --cached` on a repo that never tracked it
     // would still rewrite the index on every launch, inside the retry path.
-    const tracked = this.git(['ls-files', '--', 'cost-ledger.jsonl'], root);
+    const tracked = await this.git(['ls-files', '--', 'cost-ledger.jsonl'], root);
     if (!tracked.ok || !tracked.out.trim()) return;
-    this.git(['rm', '--cached', '-q', '--ignore-unmatch', '--', 'cost-ledger.jsonl'], root);
+    await this.git(['rm', '--cached', '-q', '--ignore-unmatch', '--', 'cost-ledger.jsonl'], root);
     console.warn('[hive] untracked the cost ledger from the hive repo');
   }
 
@@ -2730,7 +2911,7 @@ export class HiveManager {
    * `.codex` path from the index. The files stay on disk, so `codex --resume`
    * is unaffected; only their history stops.
    */
-  private untrackCodexHomes(root: string): void {
+  private async untrackCodexHomes(root: string): Promise<void> {
     if (this.untrackedCodexHomes) return;
     this.untrackedCodexHomes = true;
     const agentsDir = join(root, 'agents');
@@ -2740,35 +2921,520 @@ export class HiveManager {
     } catch { /* best-effort */ }
     // Probe before mutating: `rm --cached` on a clean repo would still rewrite
     // the index on every launch, and this runs inside the commit retry path.
-    const tracked = this.git(['ls-files', '--', 'agents/*/.codex'], root);
+    const tracked = await this.git(['ls-files', '--', 'agents/*/.codex'], root);
     if (!tracked.ok || !tracked.out.trim()) return;
-    this.git(['rm', '-r', '--cached', '-q', '--ignore-unmatch', '--', 'agents/*/.codex'], root);
+    await this.git(['rm', '-r', '--cached', '-q', '--ignore-unmatch', '--', 'agents/*/.codex'], root);
     console.warn('[hive] untracked previously-committed Codex homes from the hive repo');
   }
 
-  /** Commit all hive changes. No-op if there is nothing staged. */
-  commit(message: string): void {
+  /** Single git-writer queue (AEON-1510). `git()` becoming async loses the
+   *  serialization the old `spawnSync` calls gave for free — with
+   *  `gc.autoDetach=false` two real git processes racing the same
+   *  `.git/objects/` is exactly the hazard that flag exists to prevent, so
+   *  every git-touching operation (the init commit, every `commit()`) chains
+   *  onto this ONE promise rather than firing concurrently. A failed link is
+   *  swallowed here so it can never wedge every commit queued behind it —
+   *  each link already does its own error handling/logging internally.
+   *
+   *  Known trade-off, narrowed but not eliminated (AEON-1522, the pathspec-
+   *  add follow-up this comment used to flag as separate, larger work):
+   *  `doCommit`'s `git add` stages whatever is on disk at the moment its
+   *  QUEUED TURN actually runs, not at the moment `commit()` was called.
+   *  Two `commit()` calls fired in the same synchronous burst (nothing
+   *  awaited between them — the common shape, since no call site awaits
+   *  `commit()`) both queue before either's `add` executes, so a call that
+   *  passes no explicit `paths` (or one whose write-set genuinely can't be
+   *  enumerated cheaply — `registerAgent`'s conditional writes plus a
+   *  bundled-skills directory copy is the one remaining `-A` call site) can
+   *  still have its files swept into a neighboring commit instead of
+   *  getting their own. `patchAgentRole`/`setArchived`/`renameAgent`/
+   *  `recordSession`/`writeTasks`/`send`/`routeOnce` now pass `commit()` the
+   *  exact paths they touched, so bursts of THOSE never blur into each
+   *  other regardless of ordering. No data is ever lost either way (every
+   *  write lands in some commit, the tree always ends up clean afterward)
+   *  and commits never reorder — a caller that needs a guaranteed distinct
+   *  commit per write can still `await flushGit()` first. */
+  private gitQueue: Promise<void> = Promise.resolve();
+  // Set once `flushGitBeforeQuit` gives up waiting (see below) — a queued
+  // link whose turn arrives AFTER that point must not start a NEW git
+  // process; shutdown has already committed to killing whatever was running
+  // and moving on, and letting a fresh spawn begin right behind it would
+  // recreate the exact survivor problem one link later.
+  private gitShuttingDown = false;
+  private enqueueGit(fn: () => Promise<void>): void {
+    this.gitQueue = this.gitQueue.then(() => {
+      if (this.gitShuttingDown) return;
+      return fn();
+    }).catch(() => { /* already logged inside fn */ });
+  }
+
+  // AEON-1487 (re-scoped from a discovery card to confirmation/regression tooling once
+  // AEON-1493 identified and fixed the actual freeze — see git()'s own comment above): the fix
+  // moved the git subprocess off the main thread, but nothing was watching for a REGRESSION —
+  // a future commit() call site added back onto the sync path, or the queue backing up under
+  // load until callers are effectively waiting seconds again even though no single call blocks.
+  // This measures queue-entry-to-settle latency for every commit — not just the git subprocess
+  // itself, so it also catches the queue backing up, not only a reintroduced sync call — and on
+  // a breach captures an unsandboxed `sample` of this process for post-mortem, the same
+  // instrument god's original sample-1520 evidence used, so a real recurrence produces the same
+  // kind of evidence without anyone needing to catch it live by hand again.
+  private static readonly COMMIT_LATENCY_WARN_MS = 1000;
+  // Rate-limited so a sustained slow patch (many commits in a row over the threshold) samples
+  // once, not once per commit — the point is catching the FIRST occurrence for diagnosis, not
+  // spawning a profiler in a loop.
+  private static readonly COMMIT_SAMPLE_COOLDOWN_MS = 60_000;
+  private _lastCommitSampleAt = 0;
+  private _checkCommitLatency(t0: number): void {
+    const elapsed = Date.now() - t0;
+    if (elapsed < HiveManager.COMMIT_LATENCY_WARN_MS) return;
+    console.warn(`[hive] AEON-1487: commit queue latency ${elapsed}ms exceeds ${HiveManager.COMMIT_LATENCY_WARN_MS}ms threshold — main thread should not have blocked (AEON-1493), but the app may still feel slow if callers are piling up behind this`);
+    const now = Date.now();
+    if (now - this._lastCommitSampleAt < HiveManager.COMMIT_SAMPLE_COOLDOWN_MS) return;
+    this._lastCommitSampleAt = now;
+    const root = this.root();
+    if (!root) return;
+    const dir = join(root, 'diagnostics');
+    try { mkdirSync(dir, { recursive: true }); } catch { return; }
+    const file = join(dir, `commit-latency-${stamp()}.sample.txt`);
+    // Best-effort and fire-and-forget: a failed or unavailable `sample` binary (non-macOS, or
+    // sandboxed in a context this process doesn't control) must never affect the commit it is
+    // diagnosing — it already resolved by the time this runs.
+    try {
+      execFile('sample', [String(process.pid), '3', '-mayDie', '-file', file], () => { /* best-effort */ });
+    } catch { /* sample unavailable — the warning above is still the record */ }
+  }
+
+  /** Resolves once every git operation queued so far has finished — the
+   *  completion contract async `commit()` doesn't otherwise offer, since
+   *  callers fire-and-forget it exactly as they did the old synchronous
+   *  version. Needed anywhere something is about to touch the working tree
+   *  right after triggering a write (test cleanup deleting the temp home) —
+   *  `git()`'s own doc comment already warns that racing an in-flight git
+   *  process against a directory removal throws ENOTEMPTY. For app shutdown,
+   *  use `flushGitBeforeQuit` below instead of this directly — quit must
+   *  never wait unboundedly.
+   *
+   *  A single `await this.gitQueue` is NOT enough (found live, AEON-1523
+   *  round 5, while routing `maybeScheduleMaintenanceGc` through this same
+   *  queue — see its own doc comment): `doCommit` calls `enqueueGit` for
+   *  the maintenance gc from WITHIN its own already-running queue link, so
+   *  `this.gitQueue` gets REASSIGNED to a new promise (the gc's) while the
+   *  ORIGINAL commit's promise — the one this method captured — is still
+   *  pending. Awaiting only that captured reference resolves the instant
+   *  the COMMIT finishes, before the gc it just scheduled ever runs,
+   *  producing exactly the "flushed but something is still running" gap
+   *  this method exists to close. Reproduced directly: a test's own
+   *  `fs.rmSync` after a bare single-await `flushGit()` deleted the gitBin
+   *  script out from under a maintenance gc that hadn't started yet, and
+   *  the gc's own spawn then failed with "module not found". Fixed by
+   *  looping: capture the current queue, await it, then check whether
+   *  `this.gitQueue` changed WHILE we were waiting (something enqueued
+   *  itself from inside that link) — if so, that's new work, await it too,
+   *  repeating until a full await produces no further change. */
+  async flushGit(): Promise<void> {
+    let observed: Promise<void>;
+    do {
+      observed = this.gitQueue;
+      await observed;
+    } while (observed !== this.gitQueue);
+  }
+
+  /** AEON-1523 (Pam's production-base review, 2026-09-14): `flushGit()` had
+   *  no production caller at all despite its own doc comment naming app
+   *  shutdown as one — a file written and fire-and-forget `commit()`-queued
+   *  shortly before quit could have its `git add`/`git commit` child killed
+   *  mid-flight by process exit, since neither `teardownAndQuit()` nor the
+   *  `will-quit` hard-exit path awaited the queue. `timeoutMs` picks "wait
+   *  long enough for the normal case (a queued commit settling in low
+   *  hundreds of ms) but give up well short of a user perceiving a hung
+   *  quit" — the same trade-off `will-quit`'s existing 1200ms analytics race
+   *  already makes.
+   *
+   *  Round 2 of that same review (still 2026-09-14) caught what "give up"
+   *  actually meant here: this used to just stop WAITING when the deadline
+   *  won, leaving the current git child (spawned `detached: true`, its own
+   *  process-group leader) free to keep running past `will-quit`'s later
+   *  hard `app.exit(0)` — Electron exiting does not touch a detached
+   *  process's process GROUP. A relaunch soon after could then start a new
+   *  writer while that orphan was still mutating `.git/objects`, reproducing
+   *  the exact concurrent-writer hazard `gc.autoDetach=false` and the whole
+   *  queue exist to prevent, just moved to the shutdown boundary instead of
+   *  a mid-session timeout. So "the deadline wins" now means something
+   *  active, not passive: stop the queue from starting anything ELSE, kill
+   *  the CURRENT process's tree so it cannot survive past exit, and wait
+   *  (still bounded — this can never become the unbounded wait it's
+   *  replacing) for that kill to actually be reaped before returning.
+   *
+   *  Still best-effort, not a guarantee: a commit that doesn't land within
+   *  `timeoutMs` is exactly as lost as it was before this method existed —
+   *  what changed is that losing it now also means CLEANLY not committing
+   *  it, rather than leaving an unsupervised process to maybe finish it
+   *  later, unobserved, after the app that queued it is already gone.
+   *
+   *  Named honestly, not implied away (god's ruling, AEON-1523 round 3):
+   *  SIGKILLing `git` mid-`add`/`commit` can leave `.git/index.lock` behind,
+   *  or an index that reflects a partial `add`. This is an ACCEPTED COST of
+   *  bounded quit, not a case this method also cleans up — the mitigation
+   *  is what already exists elsewhere, not new machinery here: `commit()`'s
+   *  own `clearStaleLock` sweeps a stale `index.lock` on the NEXT commit
+   *  attempt (the very next app launch, in practice), and a partial index
+   *  self-heals the moment that next `git add -A` runs, since `add -A`
+   *  recomputes the whole index from the working tree rather than trusting
+   *  its prior state. Nothing here is worse off than an app that crashed
+   *  or lost power mid-commit already was.
+   *
+   *  Round 7 (Dwight's review of round 6, non-blocking, 2026-09-14): the
+   *  paragraph above was written when `add`/`commit` were the only killable
+   *  phases, and its mitigations do NOT transfer to `git gc` now sharing this
+   *  same kill path (round 5/6) — a killed `gc` mostly leaves `.git/gc.pid`
+   *  and temp pack files instead of `index.lock`/`HEAD.lock`. Named honestly
+   *  rather than silently covered by the paragraph above: git itself largely
+   *  handles this residue without help from this codebase — `gc.pid` is only
+   *  honoured while its recorded pid is alive on the same host, and a later
+   *  `gc` prunes stale temp files on its own — so this is a gap in the
+   *  DOCUMENTED analysis, not a demonstrated behavioral one, but the
+   *  standard on this card is to say so rather than let a reader assume
+   *  the paragraph above already covers it.
+   *
+   *  Round 8 (Dwight's review of the round-7 doc fix, 2026-09-14): `gc` also
+   *  runs `pack-refs --all --prune` as part of its normal work, and a
+   *  SIGKILL landing mid-`pack-refs` can leave `.git/packed-refs.lock`
+   *  behind — unlike `gc.pid`/temp packs, git does NOT age this one out or
+   *  ignore it: the next ref update fails outright with "Unable to create
+   *  '.../packed-refs.lock': File exists" until it's removed. CONFIRMED, not
+   *  just theorized (god's ruling: settle it rather than ship it hedged,
+   *  since 0.5.4 itself is what makes `gc` killable): reproduced directly by
+   *  creating 50k loose refs to give `pack-refs` real work, SIGKILLing its
+   *  child process mid-run, and finding a real 0-byte `packed-refs.lock` on
+   *  disk with `packed-refs` itself never created. `clearStaleLock` below now
+   *  sweeps it exactly
+   *  like `index.lock`/`HEAD.lock`, on the same next-commit-attempt
+   *  cadence this paragraph already relies on for those two.
+   *
+   *  Also worth naming: `gc` used to spawn `detached`+`unref`'d specifically
+   *  so it could never delay quit. Routing it through this same drain budget
+   *  (the whole point, so it can be killed) means a threshold-crossing commit
+   *  landing immediately before quit can now make quit spend up to
+   *  `timeoutMs` waiting on a `gc` that used to be irrelevant to it — a
+   *  deliberate and correct trade (killable beats fast-but-unkillable here),
+   *  but a real change to quit's worst case that wasn't written down until
+   *  now. */
+  async flushGitBeforeQuit(timeoutMs: number): Promise<void> {
+    const flushed = await Promise.race([
+      this.flushGit().then(() => true),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), timeoutMs))
+    ]);
+    // AEON-1523 round 6 (god, 2026-09-14, answering Dwight's open question
+    // with a checked fact, not a reading): `before-quit` only preventDefaults
+    // when `ptyManager.list().length > 0`; with zero live agents a real
+    // Cmd-Q/dock-quit falls through with no preventDefault, so `will-quit`
+    // fires WITHOUT `teardownAndQuit()` ever having run — `hive.stopRouter()`,
+    // `hookServer.stop()`, `telemetry.stop()`, etc. are all still live for the
+    // whole duration of this method. The old code set this flag only on the
+    // branch below where the deadline won, leaving the `if (flushed) return`
+    // branch with an open window: the queue was observed empty at this
+    // instant, but nothing stopped a still-live router/webhook/hook-server
+    // callback from calling `commit()` a tick later, enqueueing a real `git
+    // add`/`git commit` spawn that this method had already returned without
+    // ever seeing — `will-quit`'s `finish()` calls the synchronous
+    // `app.exit(0)` right after, killing that child mid-spawn with none of
+    // this method's protections applied. Fixed by setting the gate here,
+    // right after the race settles, on BOTH branches, rather than only
+    // inside the branch below — not any earlier: setting it before the race
+    // would also block flushGit()'s OWN in-flight commit from ever reaching
+    // its git() call (enqueueGit's chained closure hasn't run yet at the
+    // synchronous instant this method is entered), defeating the very flush
+    // this method exists to perform. A commit that gets enqueued WHILE the
+    // race is still pending is not a problem either way: flushGit()'s own
+    // loop re-observes `gitQueue` for exactly this reason (see its doc
+    // comment) and sweeps it into the same wait, up to the timeout.
+    this.gitShuttingDown = true;
+    if (flushed) return;
+    if (this.currentGitPid) hardKillTree(this.currentGitPid);
+    // Bounded tail: SIGKILL is unignorable so `currentGitClosed` WILL
+    // resolve, but this box's own zombie-reaping timing (see the
+    // hive-git-timeout.test.cjs doc comment) means "reaped" can lag the
+    // kill by a little — cap it at the same grace window escalation uses
+    // elsewhere rather than waiting on it unconditionally.
+    await Promise.race([
+      this.currentGitClosed,
+      new Promise<void>((resolve) => setTimeout(resolve, this.gitKillGraceMs))
+    ]);
+  }
+
+  /** Commit all hive changes. No-op if there is nothing staged. Fire-and-forget:
+   *  no caller here awaits or inspects a return value (routeOnce's own return
+   *  is computed before this is called; writeTasks/registerAgent etc. are void),
+   *  so queuing the actual work instead of blocking the caller is safe — the
+   *  queue above still guarantees every commit lands in call order.
+   *
+   *  `paths` (AEON-1522, the pathspec-add follow-up the queue's own doc
+   *  comment above named as separate, larger work): when a caller knows
+   *  exactly which files it touched, passing them here scopes `git add` to
+   *  just those paths instead of `-A`, closing the granularity blur two
+   *  `commit()` calls fired in the same synchronous burst used to cause (see
+   *  `gitQueue`'s doc comment for the mechanism). `doCommit` always adds
+   *  `log.jsonl` to a passed `paths` automatically — every migrated call
+   *  site logs via `appendLog` right before calling this, so requiring each
+   *  one to repeat the same path would just invite the one omission that
+   *  actually matters.
+   *
+   *  Two distinct signals, not one (round 3, Dwight's review, 2026-09-14):
+   *  OMIT `paths` entirely to fall back to `-A` — the safe default for a
+   *  call site whose write-set isn't a small, fully enumerable,
+   *  unconditional list (a directory copy, several conditionally-written
+   *  files) where getting the list wrong would silently leave a real file
+   *  uncommitted. Pass an EXPLICIT empty array `[]` — different from
+   *  omitting it — when a caller's entire write-set besides `log.jsonl` is
+   *  known to be under an ignored-by-design tree (see below): that scopes
+   *  the commit to exactly `log.jsonl`, on purpose, never `-A`.
+   *
+   *  Never pass a path under `inbox/`/`outbox/` here (round 3): both are
+   *  gitignored by design in every agent's own `.gitignore`
+   *  (`MINE_IGNORE_LINES`, predates this card) — `git add` on an
+   *  EXISTING-but-ignored path refuses it (this box's git 2.39 partially
+   *  stages the rest and warns; an older or differently-configured git can
+   *  refuse the whole pathspec outright, per Dwight's own probe — do not
+   *  rely on version-specific partial-staging behavior either way). The
+   *  fix is not filtering ignored paths back out here — it's that a caller
+   *  whose write-set is entirely inbox/outbox (message delivery,
+   *  routing) must never collect those paths into `paths` in the first
+   *  place; `send()`/`routeOnce()` pass `[]` for exactly this reason.
+   *
+   *  Named honestly (Dwight's round-2 review, 2026-09-14): `paths` scopes
+   *  what `git add` STAGES, not what `git commit` (called with no pathspec
+   *  of its own) actually COMMITS — a bare `git commit` always commits the
+   *  WHOLE index, staged by this call or by anything else. In the ordinary
+   *  case that distinction is invisible (each call's `add`+`commit` pair
+   *  runs back-to-back inside one queue link, so nothing else is ever
+   *  staged in between) but it stops holding across an INTERRUPTED pair:
+   *  AEON-1523 rounds 5/6 made `git()` itself reject between an `add` that
+   *  already landed and a `commit` that never got to run (shutdown). That
+   *  staged-but-uncommitted content can survive to the next launch, where
+   *  the first commit of ANY kind — not necessarily one that touched those
+   *  files — sweeps it in under an unrelated message. The guarantee this
+   *  method actually offers is "scoped staging", not "scoped commits";
+   *  don't read it as the stronger one.
+   *
+   *  `t0`/`_checkCommitLatency` (AEON-1487): captured at CALL time, not when the queued closure
+   *  actually starts running, so the measured latency includes any time this commit spent
+   *  waiting behind others in `gitQueue` — a queue backing up under load is exactly the
+   *  regression this card exists to catch, not only a reintroduced synchronous call. Wrapped in
+   *  try/finally so a failed `doCommit` still gets measured (matching AEON-1487's original
+   *  "for every commit" scope) rather than only successful ones. */
+  commit(message: string, paths?: string[]): void {
+    const t0 = Date.now();
+    this.enqueueGit(async () => {
+      try {
+        await this.doCommit(message, paths);
+      } finally {
+        this._checkCommitLatency(t0);
+      }
+    });
+  }
+
+  private async doCommit(message: string, paths?: string[]): Promise<void> {
     const root = this.root();
     if (!root || !existsSync(join(root, '.git'))) return;
-    this.untrackCostLedger(root);
-    this.untrackCodexHomes(root);
+    await this.untrackCostLedger(root);
+    await this.untrackCodexHomes(root);
+    // AEON-1522 round 2: `log.jsonl` must be an ABSOLUTE path (join(root, ...)), matching
+    // every other entry `paths` ever carries — the existsSync split just below resolves
+    // relative to `process.cwd()`, not `root`. A bare relative `'log.jsonl'` almost always
+    // fails that check (found live: it misclassified as "vanished", routing it through
+    // `git rm --cached` instead of `git add` and actually UNSTAGING a previously-committed
+    // log.jsonl on every migrated commit — a real, silent regression, not hypothetical).
+    const scopedPaths = paths !== undefined ? [...new Set([...paths, join(root, 'log.jsonl')])] : null;
     for (let attempt = 0; attempt < 5; attempt++) {
       this.clearStaleLock(root);
-      const add = this.git(['add', '-A'], root);
-      const commit = this.git(['commit', '-q', '-m', message], root);
-      if (commit.ok) return;
+      let add: { ok: boolean; out: string; err: string };
+      if (scopedPaths) {
+        // AEON-1522 round 2 (found live proving Dwight's own routeOnce fix, not theorized):
+        // `git add -- <path>` hard-fails ("did not match any files", exit 128) on a path that
+        // no longer exists AND was never tracked before — exactly `routeOnce`'s own vacated
+        // outbox-file path for a message created and renamed away within the SAME call,
+        // before ever being committed. Confirmed empirically: even ONE such entry fails the
+        // WHOLE `add`, so a single bad path silently sinks every other path in the same
+        // pathspec too — this is not a rare edge, it is `routeOnce`'s ordinary shape.
+        // `git rm --cached --ignore-unmatch` handles both cases `add` cannot tell apart from
+        // a missing path alone: a genuinely PREVIOUSLY-TRACKED-then-deleted path (needs the
+        // deletion staged — this is the case a plain `add` DOES handle, and the one Dwight's
+        // review correctly praised) and a NEVER-tracked, now-vanished path (nothing to stage
+        // at all) — confirmed empirically to succeed silently on the latter and correctly
+        // stage the former, uniformly, with no way to pick the wrong branch.
+        const existing = scopedPaths.filter((p) => existsSync(p));
+        const vanished = scopedPaths.filter((p) => !existsSync(p));
+        const addResult = existing.length ? await this.git(['add', '--', ...existing], root) : { ok: true, out: '', err: '' };
+        const rmResult = vanished.length ? await this.git(['rm', '--cached', '--ignore-unmatch', '--', ...vanished], root) : { ok: true, out: '', err: '' };
+        add = { ok: addResult.ok && rmResult.ok, out: addResult.out + rmResult.out, err: addResult.err + rmResult.err };
+      } else {
+        add = await this.git(['add', '-A'], root);
+      }
+      const commit = await this.git(['commit', '-q', '-m', message], root);
+      if (commit.ok) { this.maybeScheduleMaintenanceGc(root); return; }
       if (/nothing to commit/i.test(commit.out + commit.err)) return;
-      if (!add.ok || /index\.lock/i.test(commit.err)) { sleepSync(50 * (attempt + 1)); continue; }
+      // "nothing added to commit but untracked files present" (distinct from
+      // "nothing to commit" above, and pre-existing in 0.5.3's synchronous
+      // code too — found live during AEON-1523's re-verification, not
+      // theorized): `add -A` reported success but a file written between it
+      // and `commit` running wasn't staged. Retrying re-runs `add -A` fresh,
+      // which sees the file and stages it — unlike the genuine "nothing to
+      // commit" case, there IS something real to commit here, so silently
+      // returning would leave it uncommitted until some unrelated later
+      // commit() happens to sweep it up instead of fixing it now.
+      if (!add.ok || /index\.lock/i.test(commit.err) || /nothing added to commit/i.test(commit.out)) {
+        await sleep(50 * (attempt + 1));
+        continue;
+      }
       console.warn(`[hive] commit gave up after ${attempt + 1} attempts:`, commit.err || commit.out);
       return;
     }
     console.warn('[hive] commit gave up after 5 attempts');
   }
 
+  // — periodic maintenance gc (AEON-1493-for-0.5.2) —
+  //
+  // The freeze this fixes is NOT the routine `add`+`commit` above — those are
+  // small and fast. It is `gc.autoDetach=false` in `git()`'s flags: once the
+  // repo crosses git's `gc.auto` loose-object threshold (default 6700), THAT
+  // flag makes the resulting `git gc --auto` run inline inside the same
+  // blocking `spawnSync`, freezing the whole Electron main process for as
+  // long as the repack takes — measured on a real hive at ~700MB of loose
+  // objects (AEON-1507/1488).
+  //
+  // A full async rewrite of `commit()`/`git()` was tried first and reverted:
+  // 8 of the 9 call sites into `commit()` are synchronous, void-or-value-
+  // returning methods (`ensureHive`, `patchAgentRole`, `setArchived`,
+  // `renameAgent`, `recordSession`, `drainForStop`, `routeOnce`,
+  // `writeTasks`) whose callers — including every existing hive-*.test.cjs
+  // fixture, which tears its temp home down via `t.after` the instant its
+  // test function's promise resolves — depend on the commit having already
+  // landed by the time the call returns. Making `commit()` fire-and-forget
+  // broke that contract and reintroduced a variant of the exact ENOTEMPTY-
+  // shaped race `gc.autoDetach=false` exists to prevent (this time between
+  // the test's own cleanup and a commit still in flight): confirmed by
+  // running the existing hive-*.test.cjs suite against both versions from an
+  // identical starting point — 0 "[hive] commit gave up" warnings on
+  // unmodified 0.5.2, 50 across the same 10 files with the async rewrite.
+  //
+  // This fix instead attacks the trigger condition directly: keep the repo's
+  // loose-object count far under the `gc.auto` threshold continuously, so the
+  // inline auto-gc inside the synchronous commit path has nothing to do and
+  // essentially never fires. The periodic gc runs via `spawn` (not
+  // `spawnSync`), detached and unref'd, on a cadence with no relationship to
+  // any single commit's caller or any test's lifecycle — nothing is ever
+  // waiting on it, so it cannot race a directory removal the way a
+  // commit-coupled background gc could.
+  //
+  // SECOND ATTEMPT (AEON-1510, same day): `commit()`/`git()` above ARE now
+  // async after all, on top of this fix rather than instead of it — the two
+  // are complementary, not rivals (gc.auto prevention here, single-writer
+  // queue there). What changed vs the reverted first attempt: `flushGit()`
+  // gives every hive-*.test.cjs fixture (and any other caller that needs it)
+  // an explicit way to wait for a commit to actually land before tearing
+  // its temp home down, closing the exact ENOTEMPTY-shaped gap the revert's
+  // own measurement caught. This was built and reviewed against a stale
+  // fork that never saw this comment or this fix — go reread the commit
+  // history around AEON-1523 for how that happened and what closed the gap
+  // (a from-scratch re-verification against THIS tree, same 0-warnings bar
+  // the revert set, not an assumption that fixing the test race in isolation
+  // was sufficient).
+  //
+  // KNOWN CEILING: plain `git gc` (what this runs) only packs REACHABLE loose
+  // objects — by design it leaves unreachable ones (dangling trees/blobs/
+  // commits from history rewrites) alone for a 2-week safety window before a
+  // prune would touch them. A hive that measured ~7000 loose objects (AEON-
+  // 1507/1488) had almost all of them turn out to be exactly that class, left
+  // behind by one-off history surgery, not by routine append-only commits —
+  // this periodic gc packed the reachable side down fine but did not move
+  // that number. Routine operation (what this loop actually does every
+  // message) doesn't mint unreachable garbage at volume, so in normal use the
+  // loose count this keeps down IS the number that matters. If it ever climbs
+  // back past the gc.auto threshold despite this running, that is the signal
+  // the garbage is unreachable-class again (from another rewrite/rebase/
+  // squash event on the hive repo) and needs `git gc --prune=now` (or a
+  // reflog-expire pass first) — a bigger gc cadence here won't touch it.
+  private commitsSinceMaintenanceGc = 0;
+  // Comfortably under gc.auto's default 6700-loose-object trigger even
+  // accounting for a commit adding more than one object; keeps a live hive
+  // repo (a commit roughly every few seconds under load) from ever
+  // approaching the threshold between maintenance runs.
+  private static readonly MAINTENANCE_GC_EVERY_COMMITS = 500;
+  // Overlap guard (Pam's non-author review, AEON-1493-for-0.5.2): without
+  // this, a burst of commits landing while a maintenance gc is still running
+  // would spawn a second one on top of it the moment the counter next crosses
+  // the threshold. Cleared once the queued gc settles (success or failure) —
+  // the next threshold crossing is then free to try again.
+  private maintenanceGcInFlight = false;
+
+  /** AEON-1523 round 5 (Dwight's review, 2026-09-14): this used to spawn
+   *  `git gc` directly via `spawn`/`spawnGc`, entirely OUTSIDE `git()` and
+   *  `gitQueue` — a git process that failed all three properties rounds 2-4
+   *  established for every OTHER git-touching operation: not gated by
+   *  `gitShuttingDown` (could start after shutdown began), not tracked in
+   *  `currentGitPid` (`flushGitBeforeQuit`'s kill couldn't reach it), and
+   *  explicitly `detached` + `unref`'d — surviving `will-quit`'s `app.exit(0)`
+   *  by DESIGN, which is exactly the orphan condition round 2 exists to
+   *  prevent for everything else. Worse than an orphaned commit child too:
+   *  `git gc` rewrites and prunes objects rather than appending, the worst
+   *  possible participant in a two-writers-on-one-`.git/objects` race. It
+   *  also broke `flushGit()`'s own contract silently: `flushGit()` awaits
+   *  `gitQueue` only, so a gc scheduled outside the queue meant "flushed"
+   *  no longer implied "no git process running" — exactly the assumption
+   *  several `t.after` cleanups (`await hive.flushGit(); fs.rmSync(...)`)
+   *  depend on to avoid ENOTEMPTY.
+   *
+   *  Fixed by routing it through `git()` is not right either — `git()` is
+   *  called from a NON-serialized context here (`doCommit` never awaits
+   *  this method, by design: nothing should block on a maintenance gc), so
+   *  a bare `this.git(['gc'], root)` call would run CONCURRENTLY with
+   *  whatever the queue's NEXT already-queued commit does — reintroducing
+   *  the exact two-processes-on-one-tree hazard this whole queue exists to
+   *  prevent, just one layer removed. The fix is `enqueueGit`: it chains
+   *  onto `gitQueue` without making the CALLER wait (fire-and-forget from
+   *  `doCommit`'s side, exactly like before), while still (1) being subject
+   *  to the `gitShuttingDown` gate at both the queue-link and `git()`-spawn
+   *  layers, (2) tracked in `currentGitPid`/`currentGitClosed` once it
+   *  spawns, and (3) making `flushGit()` genuinely wait for it — because it
+   *  now IS the queue, not something running beside it.
+   *
+   *  Round 7 (Dwight's review, non-blocking, 2026-09-14): `maintenanceGcInFlight`
+   *  is set true BEFORE the `enqueueGit` call below, not inside it — so if
+   *  `gitShuttingDown` is already set by the time this link's turn comes up,
+   *  `enqueueGit`'s own `if (this.gitShuttingDown) return;` skips `fn`
+   *  entirely, its `finally` never runs, and the guard sticks `true` forever.
+   *  Harmless as the code stands today: `gitShuttingDown` is only ever set
+   *  inside `flushGitBeforeQuit`, immediately before the process exits, so
+   *  there is no future call where a stuck guard could matter. This stops
+   *  being true — silently, with nothing logged, maintenance gc simply never
+   *  firing again — the moment either assumption changes: `gitShuttingDown`
+   *  becomes resettable, or something calls `flushGitBeforeQuit` without the
+   *  process actually exiting afterward. */
+  private maybeScheduleMaintenanceGc(root: string): void {
+    const everyCommits = this.maintenanceGcOptions?.everyCommits ?? HiveManager.MAINTENANCE_GC_EVERY_COMMITS;
+    this.commitsSinceMaintenanceGc++;
+    if (this.commitsSinceMaintenanceGc < everyCommits) return;
+    this.commitsSinceMaintenanceGc = 0;
+    if (this.maintenanceGcInFlight) return;
+    this.maintenanceGcInFlight = true;
+    this.enqueueGit(async () => {
+      try {
+        const result = await this.git(['gc'], root);
+        if (!result.ok) console.warn('[hive] maintenance gc failed:', result.err || result.out);
+      } finally {
+        this.maintenanceGcInFlight = false;
+      }
+    });
+  }
+
   private clearStaleLock(root: string): void {
     const STALE_THRESHOLD_MS = 10_000;
     try {
-      for (const lock of ['index.lock', 'HEAD.lock']) {
+      // 'packed-refs.lock' added round 8 (Dwight, 2026-09-14): a killed `gc`
+      // can leave it behind mid-`pack-refs`, and unlike gc.pid/temp packs,
+      // git does NOT age it out on its own — see flushGitBeforeQuit's doc
+      // comment for the full context.
+      for (const lock of ['index.lock', 'HEAD.lock', 'packed-refs.lock']) {
         const path = join(root, '.git', lock);
         if (existsSync(path) && Date.now() - statSync(path).mtimeMs > STALE_THRESHOLD_MS) rmSync(path);
       }

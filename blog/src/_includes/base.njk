@@ -2,7 +2,8 @@
 {%- set canonical = canonicalUrl or (site.origin + pageUrl) -%}
 {%- set metaTitle = (seoTitle or (title + " — " + site.blogName)) if title else site.blogName -%}
 {%- set metaDesc = description or site.description -%}
-{%- set ogImg = ogImage or site.defaultOgImage -%}
+{%- set heroOg = (page.fileSlug | heroOg) if (layout == "post.njk" and not ogImage) else false -%}
+{%- set ogImg = ogImage or ((site.origin + heroOg.path) if heroOg else site.defaultOgImage) -%}
 {%- set ogKind = ogType or ("article" if layout == "post.njk" else "website") -%}
 <!doctype html>
 <html lang="{{ site.lang }}">
@@ -24,7 +25,10 @@
 <meta property="og:description" content="{{ metaDesc }}" />
 <meta property="og:url" content="{{ canonical }}" />
 <meta property="og:image" content="{{ ogImg }}" />
-<meta property="og:locale" content="{{ site.locale }}" />
+{% if heroOg %}{% if heroOg.width %}<meta property="og:image:width" content="{{ heroOg.width }}" />
+<meta property="og:image:height" content="{{ heroOg.height }}" />
+{% endif %}<meta property="og:image:alt" content="{{ heroOg.alt }}" />
+{% endif %}<meta property="og:locale" content="{{ site.locale }}" />
 {% if layout == "post.njk" %}<meta property="article:published_time" content="{{ page.date | isoDate }}" />
 <meta property="article:author" content="{{ (author.name if author else site.author.name) }}" />
 {% for tag in tags %}<meta property="article:tag" content="{{ tag }}" />
@@ -35,7 +39,8 @@
 <meta name="twitter:title" content="{{ ogTitle or metaTitle }}" />
 <meta name="twitter:description" content="{{ metaDesc }}" />
 <meta name="twitter:image" content="{{ ogImg }}" />
-
+{% if heroOg %}<meta name="twitter:image:alt" content="{{ heroOg.alt }}" />
+{% endif %}
 <link rel="alternate" type="application/atom+xml" title="{{ site.blogName }}" href="{{ site.baseUrl }}feed.xml" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
