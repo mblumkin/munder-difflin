@@ -1,6 +1,21 @@
 <!doctype html>
 <html lang="en">
 <head>
+<!-- Google tag (gtag.js), Google Ads AW-18388216863. Loaded only when Do Not Track is
+     off, so it follows the same rule as the PostHog block on this site. -->
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){ dataLayer.push(arguments); }
+  if (navigator.doNotTrack !== '1') {
+    var gtagScript = document.createElement('script');
+    gtagScript.async = true;
+    gtagScript.src = 'https://www.googletagmanager.com/gtag/js?id=AW-18388216863';
+    document.head.appendChild(gtagScript);
+    gtag('js', new Date());
+    gtag('config', 'AW-18388216863');
+  }
+</script>
+
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Download Munder Difflin</title>
@@ -234,6 +249,17 @@
       }, true);
     };
     document.head.appendChild(s);
+  })();
+
+  /* ---- Google Ads conversion. Watches the same a[download] links as the
+     PostHog block above, but reported separately so neither one depends on the
+     other. Under Do Not Track the tag never loads and this is a no-op. ---- */
+  (function () {
+    document.addEventListener('click', function (ev) {
+      var a = ev.target && ev.target.closest ? ev.target.closest('a[download]') : null;
+      if (!a) return;
+      gtag('event', 'conversion', { send_to: 'AW-18388216863/qnM3CI670_kcEJ_Yl8BE' });
+    }, true);
   })();
 </script>
 </body>
