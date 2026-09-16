@@ -6,6 +6,29 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.5.6] — 2026-09-16 (local-only, not a public release)
+
+This build reunifies the local production line with the owned fork's current
+`main`, so router reliability work and the 0.5.5 safety features now ship from
+one line.
+
+### Fixed
+
+- **Hive commits stage the paths their caller actually changed.** Rapid adjacent
+  writes no longer blur across commit messages, while the serialized async Git
+  queue and maintenance GC retain their shutdown-safety guarantees.
+- **Slow or backed-up hive commits leave a diagnostic.** The commit-latency
+  watchdog covers both Git execution and time spent waiting in the single-writer
+  queue, with a best-effort process sample for post-mortem evidence.
+- **Cancelling Closing Time retracts delivered shutdown guidance.** Workers that
+  already received the shutdown steer get a same-channel superseding instruction.
+
+### Security
+
+- **macOS warns while stored integration credentials lack code-identity
+  isolation.** Safe Storage still encrypts at rest; the warning makes the
+  remaining same-user-process boundary explicit.
+
 ## [0.5.5] — 2026-09-16 (local-only, not a public release)
 
 Local maintenance build on the rebased 0.5.4 production lineage, now reconciled

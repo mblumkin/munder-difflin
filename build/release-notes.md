@@ -1,3 +1,5 @@
-- **Closing Time cancellation now retracts delivered shutdown guidance.**
-- **macOS warns when stored integration credentials lack code-identity isolation.**
-- **Production 0.5.4 history is reconciled onto the current public main line.**
+- **Hive commits now stage only the files each operation changed.**
+- **Slow and queue-backed commits emit a watchdog diagnostic.**
+- **Closing Time cancellation retracts delivered shutdown guidance.**
+- **macOS warns when stored credentials lack code-identity isolation.**
+- **The local production build now ships from the owned fork's current main line.**
