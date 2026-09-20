@@ -36,9 +36,17 @@ export const BUNDLED_SKILL_IDS: ReadonlySet<string> = new Set([
 ]);
 
 /** Providers a manifest may request ('agy' is accepted as an alias for
- *  'antigravity'). 'custom' is deliberately NOT allowed — it would let a
- *  manifest choose an arbitrary local binary. */
-export type HireProvider = 'claude' | 'antigravity' | 'codex' | 'cursor';
+ *  'antigravity'); the set the spawner supports (realtimeActions PROVIDER_COMMAND).
+ *  'custom' is deliberately NOT allowed — it would let a manifest choose an arbitrary
+ *  local binary. Widening this list widens nothing about flags: the manifest never names
+ *  the binary (the local preset builds the command) and SAFE_FLAG_NAMES below is
+ *  provider-independent default-deny. What each provider makes of the four safe flags is
+ *  reviewed in AEON-1598: they either mean the same benign thing or are rejected as unknown. */
+export const HIRE_PROVIDERS = [
+  'claude', 'antigravity', 'codex', 'cursor',
+  'gemini', 'opencode', 'crush', 'pi', 'qwen', 'copilot'
+] as const;
+export type HireProvider = (typeof HIRE_PROVIDERS)[number];
 
 export interface HireManifest {
   /** Spec tag; exactly `munder-difflin/hire@1` for this version. */
@@ -91,7 +99,7 @@ export interface HireValidation {
   consentRequired?: string[];
 }
 
-const PROVIDERS: readonly string[] = ['claude', 'antigravity', 'codex', 'cursor'];
+const PROVIDERS: readonly string[] = HIRE_PROVIDERS;
 const MAX_BYTES = 64 * 1024;
 
 /** A flag ("-x", "--flag", "--flag=value") or a bare value token that may follow
