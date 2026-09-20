@@ -448,4 +448,15 @@ test('a healthy beat de-escalates one level', () => {
   assert.equal(d.state.level, 'healthy');
 });
 
+test('AEON-1596: calls reported with no input never read as a loop, real repeats still do', () => {
+  const b = makeBreaker();
+  for (let i = 0; i < 30; i++) b.recordToolUse('a', 'bash', undefined);
+  for (let i = 0; i < 30; i++) b.recordToolUse('a', 'bash', null);
+  const d = beat(b, 'a', null, true, T0);
+  assert.equal(d.state.level, 'healthy', 'no-input calls must not trip the loop arm: ' + d.state.reason);
+  const c = makeBreaker();
+  for (let i = 0; i < 8; i++) c.recordToolUse('a', 'bash', { command: 'same' });
+  assert.match(beat(c, 'a', null, true, T0).state.reason, /looping/);
+});
+
 process.exit(failures ? 1 : 0);
