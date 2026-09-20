@@ -24,7 +24,8 @@
     "dist": "npm run build && electron-builder",
     "dist:mac": "npm run build && electron-builder --mac",
     "dist:win": "npm run build && electron-builder --win",
-    "dist:linux": "npm run build && electron-builder --linux"
+    "dist:linux": "npm run build && electron-builder --linux",
+    "test:packaging": "node tools/check-packaged-natives.cjs"
   },
   "dependencies": {
     "@codemirror/lang-css": "^6.3.1",
