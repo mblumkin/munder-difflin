@@ -69,12 +69,12 @@
     "@types/node": "^22.7.5",
     "@types/react": "^18.3.11",
     "@types/react-dom": "^18.3.0",
-    "@vitejs/plugin-react": "^4.3.2",
+    "@vitejs/plugin-react": "^5.2.0",
     "electron": "^43.7.3",
     "electron-builder": "^25.1.8",
-    "electron-vite": "^2.3.0",
+    "electron-vite": "^5.0.0",
     "typescript": "^5.6.3",
-    "vite": "^5.4.8"
+    "vite": "^7.3.6"
   },
   "overrides": {
     "app-builder-lib": {
