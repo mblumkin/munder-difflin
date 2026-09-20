@@ -78,6 +78,7 @@
   "overrides": {
     "app-builder-lib": {
       "@electron/rebuild": "$@electron/rebuild"
-    }
+    },
+    "toml": "^4.2.0"
   }
 }
