@@ -104,3 +104,32 @@ test('main and renderer split with the SAME tokenizer (shared module)', () => {
   // renderer's. One example locks the routing through the shared function.
   assert.deepEqual(tokenizeCommand(`a "b c" 'd e' f`), ['a', 'b c', 'd e', 'f']);
 });
+
+// AEON-1597: a request naming a provider but no command launched cfg.defaultCommand (claude) with
+// the provider's flags; claude rejected --approval-mode / --prompt and the smoke workers crashed.
+test('AEON-1597: a provider with no command launches that provider\'s own CLI, not the app default', () => {
+  const l = launch({ requestProvider: 'gemini', defaultCommand: 'claude', autoMode: true });
+  assert.equal(l.bin, 'gemini');
+  assert.match(l.command, /--approval-mode/);
+  const o = launch({ requestProvider: 'opencode', defaultCommand: 'claude' });
+  assert.equal(o.bin, 'opencode');
+});
+
+test('AEON-1597: every provider preset resolves to its own binary when no command is given', () => {
+  const { AGENT_PROVIDERS, defaultCommandForProvider } = loadTs('src/shared/agentProvider.ts');
+  const providers = (AGENT_PROVIDERS || ['claude', 'codex', 'gemini', 'opencode', 'crush', 'pi', 'qwen', 'copilot', 'cursor', 'antigravity']);
+  for (const p of providers) {
+    const want = defaultCommandForProvider(p);
+    if (!want) continue;
+    assert.equal(launch({ requestProvider: p, defaultCommand: 'somethingelse' }).bin, want, p);
+  }
+});
+
+test('AEON-1597: an explicit command still wins over the provider default', () => {
+  assert.equal(launch({ requestProvider: 'gemini', requestCommand: 'mygemini --x', defaultCommand: 'claude' }).bin, 'mygemini');
+});
+
+test('AEON-1597: no provider and no command still falls back to the app default; unknown provider too', () => {
+  assert.equal(launch({ defaultCommand: 'claude' }).bin, 'claude');
+  assert.equal(launch({ requestProvider: 'not-a-provider', defaultCommand: 'claude' }).bin, 'claude');
+});
