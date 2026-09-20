@@ -3745,6 +3745,7 @@ var net = require('node:net');
 var SOCK = process.env.HIVE_SOCK;
 var AGENT = process.env.AGENT_ID || null;
 var AUTO = process.env.HIVE_AUTO_APPROVE === '1';
+var ARGS = {};
 function post(payload) {
   try {
     if (!SOCK) return;
@@ -3757,11 +3758,18 @@ function register(pi) {
   if (!pi || typeof pi.on !== 'function') return false;
   try {
     pi.on('tool_call', function (ev) {
+      var cid = ev && (ev.id || ev.toolCallId);
+      if (cid != null) { ARGS[cid] = ev.args || ev.input; }
       post({ hook_event_name: 'PreToolUse', tool_name: ev && (ev.name || (ev.tool && ev.tool.name)), tool_input: ev && (ev.args || ev.input) });
       if (AUTO) { try { if (ev && typeof ev.approve === 'function') ev.approve(); } catch (e) {} return { approve: true }; }
       return undefined;
     });
-    pi.on('tool_result', function (ev) { post({ hook_event_name: 'PostToolUse', tool_name: ev && (ev.name || (ev.tool && ev.tool.name)) }); });
+    pi.on('tool_result', function (ev) {
+      var id = ev && (ev.id || ev.toolCallId);
+      var a = id != null ? ARGS[id] : undefined;
+      if (id != null) delete ARGS[id];
+      post({ hook_event_name: 'PostToolUse', tool_name: ev && (ev.name || (ev.tool && ev.tool.name)), tool_input: a !== undefined ? a : (ev && (ev.args || ev.input)) });
+    });
     pi.on('agent_end', function () { post({ hook_event_name: 'Stop' }); });
     return true;
   } catch (e) { return false; }
@@ -3790,16 +3798,26 @@ function post(payload) {
     c.on('error', () => {});
   } catch (e) {}
 }
+const ARGS = new Map();
 export const HiveBridge = async () => {
   return {
     event: async (input) => {
       try { if (input && input.event && input.event.type === 'session.idle') post({ hook_event_name: 'Stop' }); } catch (e) {}
     },
-    'tool.execute.before': async (input) => {
-      try { post({ hook_event_name: 'PreToolUse', tool_name: input && (input.tool || input.name) }); } catch (e) {}
+    'tool.execute.before': async (input, output) => {
+      try {
+        var args = output && output.args;
+        if (input && input.callID != null && args !== undefined) { ARGS.set(input.callID, args); if (ARGS.size > 200) ARGS.delete(ARGS.keys().next().value); }
+        post({ hook_event_name: 'PreToolUse', tool_name: input && (input.tool || input.name), tool_input: args });
+      } catch (e) {}
     },
-    'tool.execute.after': async (input) => {
-      try { post({ hook_event_name: 'PostToolUse', tool_name: input && (input.tool || input.name) }); } catch (e) {}
+    'tool.execute.after': async (input, output) => {
+      try {
+        var id = input && input.callID;
+        var a = id != null ? ARGS.get(id) : undefined;
+        if (id != null) ARGS.delete(id);
+        post({ hook_event_name: 'PostToolUse', tool_name: input && (input.tool || input.name), tool_input: a !== undefined ? a : (input && input.args) });
+      } catch (e) {}
     }
   };
 };

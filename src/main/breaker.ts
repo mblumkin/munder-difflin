@@ -184,7 +184,12 @@ export class CircuitBreaker {
    *  no-progress arm reads); the SAME key in a row is the loop signal. */
   recordToolUse(agentId: string, toolName: string | undefined, toolInput: unknown, now = Date.now()): void {
     const s = this.get(agentId);
-    const key = this.toolKey(toolName, toolInput);
+    // A provider bridge that reports the tool name but no input (opencode/pi PostToolUse
+    // before AEON-1596) would hash every call to the same key and read a varied session as
+    // "Nx identical". No input is no evidence of repetition, so each such call is distinct.
+    const key = (toolInput === undefined || toolInput === null)
+      ? `${toolName ?? '?'}:no-input#${++this.noInputSeq}`
+      : this.toolKey(toolName, toolInput);
     if (key === s.repeatKey) {
       s.repeatCount += 1;
     } else {
@@ -224,6 +229,8 @@ export class CircuitBreaker {
     const s = this.get(agentId);
     if (s.compactingUntil > now) s.compactingUntil = now + POST_COMPACT_GRACE_MS;
   }
+
+  private noInputSeq = 0;
 
   private toolKey(toolName: string | undefined, toolInput: unknown): string {
     // Truncating replacer: a Write/Edit tool_input carries the whole file body
