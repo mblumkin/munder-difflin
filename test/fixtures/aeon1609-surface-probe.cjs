@@ -107,6 +107,44 @@ app.whenReady().then(async () => {
     out.fatal = String(e && e.stack || e);
   }
 
+  // Native modules. These are the ABI surface the version jump actually breaks,
+  // and the break shows up at first USE inside Electron — not at package time —
+  // so a wrong-ABI rebuild produces a DMG that builds clean and dies when the
+  // user opens a terminal.
+  //
+  // Both probes must EXERCISE the module, not merely require it. Measured, not
+  // assumed: node-pty ships several artifacts (prebuilds/<platform> from the
+  // install, plus build/Release and bin/darwin-arm64-<abi> from electron-rebuild).
+  // With both Electron-ABI copies removed, `require('node-pty')` still SUCCEEDS
+  // — it falls back to the Node-ABI prebuild — and the failure only appears when
+  // a pty is actually spawned ("posix_spawnp failed"). A require-only probe is
+  // therefore worthless here: it passes with the wrong binary loaded.
+  out.probes.nativeSqlite = await (async () => {
+    try {
+      const Database = require('better-sqlite3');
+      const db = new Database(':memory:');
+      db.exec('CREATE TABLE t (k TEXT, v INTEGER)');
+      db.prepare('INSERT INTO t VALUES (?, ?)').run('aeon1609', 42);
+      const row = db.prepare('SELECT v FROM t WHERE k = ?').get('aeon1609');
+      db.close();
+      return { ok: row && row.v === 42, value: row };
+    } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+  })();
+
+  out.probes.nativePty = await (async () => {
+    try {
+      const pty = require('node-pty');
+      const p = pty.spawn('/bin/echo', ['aeon1609-pty-ok'], { name: 'xterm-color', cols: 80, rows: 24, cwd: process.cwd(), env: process.env });
+      const text = await new Promise((resolve) => {
+        let buf = '';
+        const t = setTimeout(() => resolve(buf), 4000);
+        p.onData(d => { buf += d; if (buf.includes('aeon1609-pty-ok')) { clearTimeout(t); resolve(buf); } });
+      });
+      try { p.kill(); } catch { /* already exited */ }
+      return { ok: text.includes('aeon1609-pty-ok'), value: text.trim().slice(0, 60) };
+    } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+  })();
+
   clearTimeout(selfTimeout);
   finish(0);
 }).catch(e => { out.fatal = String(e && e.stack || e); finish(92); });

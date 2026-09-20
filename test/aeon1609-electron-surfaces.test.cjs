@@ -88,6 +88,8 @@ const outFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'aeon1609-')), '
     ['shellOpenPathRejectsMissing', 'shell.openPath reports an error for a missing path, opening nothing'],
     ['isDefaultProtocolClient', 'the deep-link scheme registration is readable'],
     ['getLoginItemSettings', 'login-item settings are readable'],
+    ['nativeSqlite', 'better-sqlite3 loads under the Electron ABI and round-trips a row'],
+    ['nativePty', 'node-pty loads under the Electron ABI and a real pty produces output'],
   ];
   for (const [name, desc] of expect) {
     const p = probe(name);
