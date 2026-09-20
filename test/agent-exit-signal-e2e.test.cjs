@@ -17,6 +17,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const os = require('node:os');
 const loadTs = require('./load-ts.cjs');
 
 const { PtyManager } = loadTs('src/main/pty.ts');
@@ -33,13 +34,16 @@ test('a SIGILL death forwards the signal and the output that explains it', { ski
   const mgr = new PtyManager();
   const done = waitForExit(mgr);
 
-  // Print a recognisable banner, flush it, then kill ourselves with SIGILL —
-  // the exact shape of the crash that motivated this change.
+  // Print a recognisable banner, flush it, then die by a signal. SIGUSR1, not SIGILL: on macOS a
+  // shell that really dies of SIGILL/SIGSEGV/SIGABRT makes ReportCrash write a .ips report and
+  // raise a "bash quit unexpectedly" dialog on every run of this suite (/bin/sh is bash 3.2
+  // there). Any signal exercises the same forwarding path; SIGILL's own naming is unit-covered
+  // in agent-exit-record.test.cjs.
   const res = mgr.spawn({
     id: 'e2e-sigill',
     cwd: process.cwd(),
     command: '/bin/sh',
-    args: ['-c', 'echo "panic(main thread): Illegal instruction"; sleep 0.2; kill -ILL $$']
+    args: ['-c', 'echo "panic(main thread): Illegal instruction"; sleep 0.2; kill -USR1 $$']
   });
   assert.equal(res.ok, true, `spawn failed: ${res.error}`);
 
@@ -47,7 +51,7 @@ test('a SIGILL death forwards the signal and the output that explains it', { ski
   assert.equal(id, 'e2e-sigill');
 
   // THE REGRESSION GUARD: signal must survive the trip out of pty.ts.
-  assert.equal(info.signal, 4, 'SIGILL (4) must be forwarded, not dropped');
+  assert.equal(info.signal, os.constants.signals.SIGUSR1, 'the signal must be forwarded, not dropped');
 
   // And the exit code alone must NOT be what a caller keys on — this asserts
   // the very trap the old handler fell into.
