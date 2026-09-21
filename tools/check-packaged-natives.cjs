@@ -121,11 +121,42 @@ function checkSidecars(packDirs) {
 function main() {
   const skipPack = process.argv.includes('--skip-pack');
   if (!skipPack) {
-    console.log('check-packaged-natives: packing (electron-builder --dir)…');
+    // AEON-1625: pack UNIVERSAL, not a single architecture.
+    //
+    // This gate used to run a plain `--dir`, which on this machine packs arm64
+    // alone. That cannot certify a universal release, and the gap is not
+    // theoretical: AEON-1607 stage 5 passed this gate green and still shipped a
+    // universal build that could not be produced at all. Stage 5 moved native
+    // rebuilds to `electron-builder install-app-deps`, so both natives began
+    // shipping prebuilds for every platform and arch; @electron/universal then
+    // refuses the merge when a file is byte-identical in both halves and looks
+    // arch-specific. A single-arch pack never performs that merge, so it never
+    // sees the failure.
+    //
+    // Measured before choosing this, rather than assumed (seconds, this box):
+    //   single-arch --dir   12s, exits 0 WITH OR WITHOUT the x64ArchFiles fix
+    //   universal   --dir   33s passing, and 20s FAILING when the fix is removed
+    // So the universal pack costs about 21 extra seconds and is the only one of
+    // the two that can tell the difference. That is the whole argument.
+    //
+    // --dir deliberately, not a full dmg/zip: the merge is what carries the risk,
+    // and building installers on top of it adds minutes without adding coverage.
+    // --universal is a macOS concept; elsewhere it is not a valid arch and the
+    // pack would fail for a reason that has nothing to do with this app. The
+    // verdict below names which pack actually ran, so a single-arch run on
+    // another platform cannot be mistaken for universal coverage.
+    const universal = process.platform === 'darwin';
+    const packArgs = universal
+      ? ['electron-builder', '--dir', '--universal', '-c.mac.identity=null']
+      : ['electron-builder', '--dir'];
+    console.log(`check-packaged-natives: packing (electron-builder ${packArgs.slice(1).join(' ')})…`);
     try {
-      execFileSync('npx', ['electron-builder', '--dir', '-c.mac.identity=null'], { cwd: root, stdio: 'inherit' });
+      execFileSync('npx', packArgs, { cwd: root, stdio: 'inherit' });
     } catch (e) {
-      console.error('check-packaged-natives: FAILED — electron-builder could not produce a bundle.');
+      console.error('check-packaged-natives: FAILED — electron-builder could not produce a universal bundle.');
+      console.error('  If the error above is @electron/universal refusing a file that is "the same in both');
+      console.error('  x64 and arm64 builds", declare it in mac.x64ArchFiles (AEON-1624). A single-arch');
+      console.error('  pack would have passed this, which is exactly why this gate packs universal now.');
       console.error(`  ${e && e.message}`);
       return 1;
     }
@@ -155,7 +186,13 @@ function main() {
   failures += checkSidecars(packDirs);
 
   if (failures > 0) { console.error(`\ncheck-packaged-natives: ${failures} required file(s) MISSING from the bundle`); return 1; }
-  console.log('\ncheck-packaged-natives: all native modules and sidecars present in the packaged app');
+  // Say WHICH pack was certified. "all present" over a single-arch pack is a
+  // narrower claim than the same sentence over a universal one, and the reader
+  // acts on this line (AEON-1612/1623, same lesson).
+  const scope = skipPack
+    ? 'the existing dist/ build'
+    : (process.platform === 'darwin' ? 'a UNIVERSAL pack (x64 + arm64 merged)' : `a single-arch pack (${process.platform})`);
+  console.log(`\ncheck-packaged-natives: all native modules and sidecars present in ${scope}`);
   return 0;
 }
 
