@@ -103,6 +103,19 @@ mac:
     NSMicrophoneUsageDescription: "Munder Difflin uses your microphone only for its opt-in voice features: Free Flow dictation (transcribed by Groq into the message queue) and talking to Michael in real time (streamed to OpenAI). The mic is off unless you turn one of these on."
   # Hardened runtime + entitlements so the spawned `claude` agents inherit this
   # app's TCC responsibility (one grant covers them all) and node-pty can load.
+  # AEON-1624: the universal build merges an x64 app and an arm64 app, and
+  # @electron/universal refuses any file that is byte-identical in both while
+  # looking arch-specific, unless it is declared here. better-sqlite3 and
+  # node-pty ship prebuilds for EVERY platform and arch, so each arch's app
+  # contains the other's .node too, identical on both sides.
+  #
+  # This only started mattering when AEON-1607 stage 5 moved native rebuilds to
+  # `electron-builder install-app-deps`: the previous `electron-rebuild -f` built
+  # each arch from source, so the binaries genuinely differed and the merge had
+  # nothing to complain about. Note the packaging gate cannot catch this class —
+  # it packs `--dir`, which is one architecture, so a universal-only failure is
+  # invisible to it. The DMG build is the only check that sees it.
+  x64ArchFiles: "**/node_modules/{better-sqlite3,node-pty}/prebuilds/**"
   hardenedRuntime: true
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
