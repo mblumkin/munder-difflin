@@ -15,7 +15,7 @@
     "build": "electron-vite build && npm run copy:main-assets",
     "copy:main-assets": "node tools/copy-main-assets.cjs",
     "preview": "electron-vite preview",
-    "postinstall": "electron-rebuild -f && node tools/ensure-pty-perms.cjs && node tools/patch-node-pty-conpty.cjs",
+    "postinstall": "electron-builder install-app-deps && node tools/ensure-pty-perms.cjs && node tools/patch-node-pty-conpty.cjs && node tools/patch-tunnelmole-selfdep.cjs",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
@@ -64,22 +64,18 @@
   },
   "devDependencies": {
     "@electron/notarize": "^2.5.0",
-    "@electron/rebuild": "^3.7.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.7.5",
     "@types/react": "^18.3.11",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^5.2.0",
     "electron": "^43.7.3",
-    "electron-builder": "^25.1.8",
+    "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
     "typescript": "^5.6.3",
     "vite": "^7.3.6"
   },
   "overrides": {
-    "app-builder-lib": {
-      "@electron/rebuild": "$@electron/rebuild"
-    },
     "toml": "^4.2.0"
   }
 }
