@@ -291,6 +291,11 @@ pull request or filed the bug that led to one.
 
 ## ⤓ Downloads
 
+**These are the newest published builds, and they are 0.4.6.** Development has continued past
+that on a 0.5.x line which is built and run locally rather than released, so there are no 0.5.x
+downloads to link and none are advertised here. The files below are the current ones; nothing on
+this page points at a version that has no artifacts behind it.
+
 Latest builds for every platform. The macOS build is **universal**, one DMG that runs on both
 Apple Silicon and Intel.
 
