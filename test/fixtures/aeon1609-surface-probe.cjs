@@ -17,6 +17,13 @@ const path = require('node:path');
 
 const out = { probes: {}, skips: {}, versions: {}, fatal: null };
 const rec = (name, fn) => { try { out.probes[name] = { ok: true, value: fn() }; } catch (e) { out.probes[name] = { ok: false, error: String(e && e.message || e) }; } };
+// AEON-1616: Electron 44's clipboard module is async throughout, so some probes
+// now have to be awaited. A rejected promise must land in the same {ok:false}
+// shape a throw does, or an API that fails asynchronously would read as a pass.
+const recAsync = async (name, fn) => {
+  try { out.probes[name] = { ok: true, value: await fn() }; }
+  catch (e) { out.probes[name] = { ok: false, error: String(e && e.message || e) }; }
+};
 
 const outPath = process.argv.find(a => a.startsWith('--out='))?.slice('--out='.length);
 
@@ -45,8 +52,21 @@ app.whenReady().then(async () => {
   out.skips.setLoginItemSettings = 'mutates login items; GHSA-jfqx-fxh3-c62j is Windows-only and unrunnable on this floor';
 
   rec('powerMonitorReadable', () => powerMonitor.getSystemIdleState(60));
-  rec('clipboardReadText', () => typeof clipboard.readText());
-  rec('clipboardReadImage', () => clipboard.readImage().isEmpty() === true || clipboard.readImage().isEmpty() === false);
+  // Read-only on purpose: a round-trip through writeText would prove more but
+  // would also clobber whatever the developer running this has on their
+  // clipboard, which this fixture's whole design refuses to do. Awaiting the
+  // real call still exercises the async path — a rejection fails the probe.
+  await recAsync('clipboardReadText', async () => typeof (await clipboard.readText()));
+  // AEON-1616: readImage()/NativeImage are GONE in Electron 44. has() + read()
+  // are the replacement surface, and read() is what the malformed-image crash
+  // advisory now sits behind.
+  await recAsync('clipboardImageSurface', async () => {
+    const has = await clipboard.has('image/png');
+    const items = await clipboard.read();
+    if (typeof has !== 'boolean') throw new Error(`clipboard.has returned ${typeof has}, expected boolean`);
+    if (!Array.isArray(items)) throw new Error('clipboard.read did not resolve to an array');
+    return { has, itemCount: items.length };
+  });
 
   // openPath on a path that cannot exist: resolves with an error string and
   // opens nothing, so the call is exercised without a side effect.

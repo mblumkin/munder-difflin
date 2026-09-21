@@ -3055,25 +3055,36 @@ ipcMain.handle('session:resolveCwd', (_evt, sessionId: unknown) =>
   (typeof sessionId === 'string' ? resolveSessionCwd(sessionId) : null));
 
 // ─── IPC: clipboard ─────────────────────────────────────────────────────────
-ipcMain.handle('app:copyToClipboard', (_evt, text: unknown) => {
+ipcMain.handle('app:copyToClipboard', async (_evt, text: unknown) => {
   if (typeof text !== 'string') return { ok: false, error: 'invalid text' };
-  try { clipboard.writeText(text); return { ok: true }; }
+  try { await clipboard.writeText(text); return { ok: true }; }
   catch (e) { return { ok: false, error: e instanceof Error ? e.message : String(e) }; }
 });
-ipcMain.handle('app:readClipboard', () => {
-  try { return clipboard.readText(); } catch { return ''; }
+ipcMain.handle('app:readClipboard', async () => {
+  try { return await clipboard.readText(); } catch { return ''; }
 });
-// Same read, SYNCHRONOUS, for the terminal's paste shortcut.
+// THERE IS NO SYNCHRONOUS READ ANY MORE, and this is a settled product decision
+// rather than an oversight — do not re-derive the old requirement from the
+// history here (AEON-1616).
 //
-// Dictation tools (muesli.works, Wispr Flow, …) type by stashing the user's
-// clipboard, writing the transcript, sending the paste key, then restoring the
-// old clipboard immediately. An `invoke` read returns a tick or two later — by
-// which point the restore has already landed and we paste the PREVIOUS text.
-// A `sendSync` read completes inside the keydown handler, before the tool gets
-// a chance to put the old contents back.
-ipcMain.on('app:readClipboardSync', (evt) => {
-  try { evt.returnValue = clipboard.readText(); } catch { evt.returnValue = ''; }
-});
+// What used to live here: an `app:readClipboardSync` sendSync handler serving
+// the terminal's paste shortcut. Dictation tools (muesli.works, Wispr Flow, …)
+// "type" by stashing the user's clipboard, writing the transcript, sending the
+// paste key, then restoring the old clipboard immediately; an async read came
+// back after that restore and pasted the PREVIOUS text, so the read had to
+// finish inside the keydown handler.
+//
+// Electron 44 made the whole main-process clipboard module async, modeled after
+// the W3C API — `readText()` returns a Promise, and `evt.returnValue` cannot
+// carry one. The race can no longer be closed from here at all. Asked directly,
+// the human accepted the regression: "we don't use dictation." So the channel is
+// retired rather than kept as an async function whose name promises otherwise,
+// and the terminal paste path uses the ordinary async read like every other
+// caller.
+//
+// If dictation ever matters again, this is NOT a matter of restoring the old
+// handler: it would need a renderer-side read (navigator.clipboard) inside the
+// key handler, or a main-process cache refreshed on clipboard change.
 // NOTE: the terminal theme is mirrored into each agent's per-session Claude
 // settings at spawn (hive.ensureAgent theme option) — deliberately NOT via
 // `claude config set -g theme`, which would also restyle the user's own
@@ -3714,13 +3725,24 @@ ipcMain.handle('dialog:attachFiles', async (evt) => {
 // clipboard holds no image (e.g. a normal text paste).
 ipcMain.handle('clipboard:saveImage', async () => {
   try {
-    const img = clipboard.readImage();
-    if (img.isEmpty()) return { ok: false as const, error: 'no image in clipboard' };
+    // Electron 44 removed clipboard.readImage()/NativeImage entirely; the
+    // replacement is the W3C-shaped read(), which hands back ClipboardItems
+    // whose payloads are Blobs. `has()` is the cheap "is there even an image"
+    // check that isEmpty() used to be.
+    const png = 'image/png';
+    if (!(await clipboard.has(png))) return { ok: false as const, error: 'no image in clipboard' };
+    const items = await clipboard.read();
+    const item = items.find((i) => i.types.includes(png));
+    if (!item) return { ok: false as const, error: 'no image in clipboard' };
+    const blob = await item.getType(png);
+    if (!(blob instanceof Blob)) return { ok: false as const, error: 'no image in clipboard' };
+    const bytes = Buffer.from(await blob.arrayBuffer());
+    if (bytes.length === 0) return { ok: false as const, error: 'no image in clipboard' };
     const dir = join(app.getPath('temp'), 'cth-pastes');
     mkdirSync(dir, { recursive: true });
     const name = `paste-${Date.now()}.png`;
     const dest = join(dir, name);
-    writeFileSync(dest, img.toPNG());
+    writeFileSync(dest, bytes);
     return { ok: true as const, file: { path: dest, name } };
   } catch (e) {
     return { ok: false as const, error: e instanceof Error ? e.message : String(e) };

@@ -235,22 +235,18 @@ export function acquireTerminal(ptyId: string, theme?: ThemeMap, fontSize = 14):
   };
   /** Paste the clipboard into the terminal.
    *
-   *  The read is SYNCHRONOUS on purpose. Dictation tools (muesli.works, Wispr
-   *  Flow, …) "type" by stashing the clipboard, writing the transcript, sending
-   *  the paste key, and restoring the old clipboard immediately after. The async
-   *  read this used to do came back a tick or two later — after the restore — so
-   *  the terminal pasted the text that had been on the clipboard BEFORE, and the
-   *  words the user had just spoken were dropped. Reading inside the keydown
-   *  handler closes that window entirely.
+   *  This read used to be synchronous, to win a race against dictation tools
+   *  (muesli.works, Wispr Flow, …) that "type" by stashing the clipboard,
+   *  writing the transcript, sending the paste key, then restoring the old
+   *  clipboard immediately — an async read landed after that restore and pasted
+   *  the user's PREVIOUS clipboard instead of the words they had just spoken.
    *
-   *  Falls back to the async read if the sync bridge is unavailable (an older
-   *  preload), so this degrades to the previous behaviour rather than to nothing. */
+   *  Electron 44's clipboard module is async throughout, so the sync read no
+   *  longer exists to reach for, and the human accepted the regression when
+   *  asked ("we don't use dictation"). Recorded here so the dictation race is
+   *  not rediscovered and treated as a live requirement (AEON-1616). */
   const pasteClipboard = (): void => {
     if (entry.exited) return;
-    try {
-      const text = window.cth.readClipboardSync?.();
-      if (typeof text === 'string') { if (text) term.paste(text); return; }
-    } catch { /* fall through to the async path */ }
     void window.cth.readClipboard().then((t) => { if (t) term.paste(t); });
   };
   term.attachCustomKeyEventHandler((ev) => {
