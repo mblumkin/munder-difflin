@@ -6,6 +6,79 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.5.8] — 2026-09-21 (local-only, not a public release)
+
+A dependency and toolchain release. `npm audit` goes from 27 rows to zero, the
+Electron line moves 32.3.3 to 44.4.3, and four standing gates now guard the
+parts of the build that previously had none.
+
+### Changed
+
+- **Electron 32.3.3 to 44.4.3, with the native modules treated as one ABI unit.**
+  better-sqlite3 and node-pty are rebuilt and exercised together against each
+  Electron, because a native that merely `require()`s successfully through a
+  Node-ABI prebuild can still fail the moment it is used.
+- **The clipboard moved to the async API Electron 44 requires.** `readImage` and
+  `writeImage` no longer exist, so pasting a screenshot is implemented against
+  `clipboard.has`/`read`/`getType` instead.
+- **The terminal's paste shortcut no longer reads the clipboard synchronously.**
+  Electron 44 has no synchronous clipboard read to offer, so the shortcut uses
+  the ordinary asynchronous one like every other caller.
+- **Dev toolchain: vite 5.4.8 to 7.3.6, electron-vite 2.3.0 to 5.0.0,
+  @vitejs/plugin-react 4.3.2 to 5.2.0.**
+- **Packaging: electron-builder 25.1.8 to 26.15.3**, with native rebuilds moved
+  to `electron-builder install-app-deps`.
+
+### Fixed
+
+- **`npm audit` is at zero rows**, including a CRITICAL advisory in `tar` and
+  high-severity advisories across the packaging toolchain.
+- **electron-builder 26 could not package this app at all.** A dependency that
+  declares itself as its own dependency made the packager's dependency walk
+  non-terminating, so a pack died with a stack overflow or an out-of-memory
+  error and produced no bundle. The self-reference is now removed at install
+  time, and the problem is filed upstream in both projects.
+- **The conpty patch script fails loudly instead of silently doing nothing.** It
+  previously exited successfully when it could not find the code it was meant to
+  guard, which would have quietly restored a whole-app crash on Windows.
+
+### Added
+
+- **The packaged app is checked for the files it needs to run.** A release pack
+  is now inspected for both native modules and all five `.cjs` sidecars,
+  because electron-builder reports success while producing a bundle missing
+  either, and a missing sidecar has crashed both the packaged app and the dev
+  server before.
+- **An Electron-runtime harness covering twenty security and platform surfaces.**
+  It runs the real binary and exercises each surface rather than asserting the
+  API exists, which is how the native-ABI and clipboard changes above were
+  judged.
+
+### Known limitation
+
+- **Dictation tools lose the terminal paste race.** Tools that type by writing
+  the clipboard and immediately restoring it (muesli.works, Wispr Flow) can have
+  their transcript replaced by the previous clipboard contents when pasting into
+  a terminal. Electron 44 removed the synchronous read that closed this window.
+  Accepted deliberately for this release.
+
+## [0.5.7] — 2026-09-20 (local-only, not a public release)
+
+Recorded after the fact: this version was built and run without a changelog
+entry, and the omission is part of why the release checklist now names this file
+explicitly.
+
+### Fixed
+
+- **The circuit breaker no longer reads input-less provider tool calls as a
+  repeated identical call**, so a legitimate sequence of such calls is not
+  treated as a loop.
+- **A spawn request naming a provider without a command launches that provider's
+  CLI** instead of failing.
+- **A hire manifest can name every provider the spawner supports.**
+- **The agent-exit-signal end-to-end test no longer raises a real macOS crash
+  report on every run.**
+
 ## [0.5.6] — 2026-09-16 (local-only, not a public release)
 
 This build reunifies the local production line with the owned fork's current

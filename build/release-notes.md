@@ -1,5 +1,4 @@
-- **Hive commits stage only the files an operation changed.**
-- **Slow and queue-backed commits emit a watchdog diagnostic.**
-- **Closing Time cancellation retracts sent shutdown guidance.**
-- **macOS warns when credentials lack code-identity isolation.**
-- **The local build ships from the fork's main line.**
+- **Electron 44 and a zero-row dependency audit.**
+- **The packaged app is now checked for its natives and sidecars.**
+- **electron-builder can package this app again.**
+- **Terminal paste no longer wins the dictation race.**
