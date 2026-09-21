@@ -19,7 +19,7 @@
  * page even claimed the opposite ("stays correct across versions").
  *
  * Two modes:
- *   (default) offline — every advertised version string matches package.json,
+ *   (default) offline — every advertised version string matches publishedVersion,
  *             except the website fallback, which may be newer (see rule 3).
  *             Run this BEFORE tagging, when the assets do not exist yet.
  *   --live    also HEADs each URL and requires 200. Run this AFTER publishing
@@ -30,7 +30,29 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const root = path.join(__dirname, '..');
-const version = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version;
+const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+const version = pkg.version;
+// AEON-1623: the DEVELOPMENT line and the PUBLISHED line are different numbers.
+// package.json's version moves with every local build; `publishedVersion` names
+// the newest release that actually has downloadable artifacts behind it. Every
+// advertised filename, tag and crawler-facing version below is checked against
+// THAT, because those strings resolve to real files on a release host and a
+// number with no artifacts behind it is the 404 this whole check exists to stop.
+//
+// This does not weaken the original rule, it re-points it: publishing bumps
+// publishedVersion, and from that moment the check enforces the new number
+// exactly as it enforced the old one. What it stops doing is demanding that a
+// local-only version bump rewrite a page advertising files nobody uploaded.
+//
+// Required, not defaulted. Falling back to `version` would let the field be
+// deleted and quietly restore the behaviour this replaced.
+const publishedVersion = pkg.publishedVersion;
+if (typeof publishedVersion !== 'string' || !/^\d+\.\d+\.\d+$/.test(publishedVersion)) {
+  console.error('check-release-links: package.json has no valid "publishedVersion" (x.y.z).');
+  console.error('  It names the newest version with real downloadable artifacts, and every');
+  console.error('  advertised link is checked against it. Add it before releasing.');
+  process.exit(2);
+}
 const releaseMd = fs.readFileSync(path.join(root, 'RELEASE.md'), 'utf8');
 
 const problems = [];
@@ -42,12 +64,12 @@ function compareVersions(a, b) {
   return 0;
 }
 
-// — 1. every pinned artifact name must carry the current version —
+// — 1. every pinned artifact name must carry the PUBLISHED version —
 const assetRe = /Munder-Difflin-(\d+\.\d+\.\d+)-([^\s`)]+)/g;
 const assets = new Set();
 for (const m of releaseMd.matchAll(assetRe)) {
-  if (m[1] !== version) {
-    problems.push(`RELEASE.md advertises Munder-Difflin-${m[1]}-${m[2]} but package.json says ${version}`);
+  if (m[1] !== publishedVersion) {
+    problems.push(`RELEASE.md advertises Munder-Difflin-${m[1]}-${m[2]} but the published version is ${publishedVersion}`);
   }
   assets.add(`Munder-Difflin-${m[1]}-${m[2]}`);
 }
@@ -55,8 +77,8 @@ if (assets.size === 0) problems.push('RELEASE.md advertises no download assets a
 
 // — 2. source tarball tags too; a stale tag silently ships last release's source —
 for (const m of releaseMd.matchAll(/archive\/refs\/tags\/v(\d+\.\d+\.\d+)/g)) {
-  if (m[1] !== version) {
-    problems.push(`RELEASE.md links source for tag v${m[1]} but package.json says ${version}`);
+  if (m[1] !== publishedVersion) {
+    problems.push(`RELEASE.md links source for tag v${m[1]} but the published version is ${publishedVersion}`);
   }
 }
 
@@ -71,8 +93,8 @@ const siteAssets = [];
 if (fs.existsSync(indexHtml)) {
   const html = fs.readFileSync(indexHtml, 'utf8');
   const m = /var REL = '(\d+\.\d+\.\d+)'/.exec(html);
-  if (m && compareVersions(m[1], version) < 0) {
-    problems.push(`docs/index.html download fallback is ${m[1]}, older than package.json ${version}`);
+  if (m && compareVersions(m[1], publishedVersion) < 0) {
+    problems.push(`docs/index.html download fallback is ${m[1]}, older than the published version ${publishedVersion}`);
   }
   const base = /var BASE = '([^']+)'/.exec(html);
   if (m && base) {
@@ -89,8 +111,8 @@ const llms = path.join(root, 'docs/llms.txt');
 if (fs.existsSync(llms)) {
   const m = /Current version:\s*(\d+\.\d+\.\d+)/.exec(fs.readFileSync(llms, 'utf8'));
   if (!m) problems.push('docs/llms.txt no longer states "Current version: x.y.z" — did the line move?');
-  else if (m[1] !== version) {
-    problems.push(`docs/llms.txt says current version ${m[1]}, package.json says ${version}`);
+  else if (m[1] !== publishedVersion) {
+    problems.push(`docs/llms.txt says current version ${m[1]}, the published version is ${publishedVersion}`);
   }
 }
 
@@ -124,5 +146,11 @@ async function checkLive() {
     console.error('\nFix RELEASE.md / docs/index.html / docs/llms.txt to match package.json before releasing.');
     process.exit(1);
   }
-  console.log(`✓ release links consistent at v${version}`);
+  // Name BOTH numbers. "consistent at v0.5.8" would be false advertising when
+  // what was checked is the 0.4.6 artifacts, and the reader acts on this line.
+  console.log(
+    version === publishedVersion
+      ? `✓ release links consistent at v${version}`
+      : `✓ release links consistent: advertised downloads all at the published v${publishedVersion} (development version is ${version}, local-only, nothing advertised for it)`
+  );
 })();
