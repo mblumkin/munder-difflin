@@ -16,8 +16,11 @@ import { dirname } from 'node:path';
 import { getText } from './fetchText';
 import { parseModelCatalog, type ModelCatalog } from '../shared/modelCatalogPayload';
 
+// The fork this app is built from, not upstream: a catalog edit only reaches our installed builds
+// if they fetch OUR main. Pointing at upstream meant a model added here shipped to nobody until
+// upstream happened to add it too (AEON-1673).
 const CATALOG_URL =
-  'https://raw.githubusercontent.com/chaitanyagiri/munder-difflin/main/docs/model-catalog.json';
+  'https://raw.githubusercontent.com/mblumkin/munder-difflin/main/docs/model-catalog.json';
 
 /** Models ship on a human timescale, and a stale list costs the user nothing —
  *  every command field in the app stays editable. Six hours matches the hero
