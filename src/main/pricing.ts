@@ -27,6 +27,21 @@ export interface ModelPrice {
 const OPUS: ModelPrice = { inputPerM: 15, outputPerM: 75, cacheReadPerM: 1.5, cacheWritePerM: 18.75 };
 const SONNET: ModelPrice = { inputPerM: 3, outputPerM: 15, cacheReadPerM: 0.3, cacheWritePerM: 3.75 };
 const HAIKU: ModelPrice = { inputPerM: 0.8, outputPerM: 4, cacheReadPerM: 0.08, cacheWritePerM: 1.0 };
+// Fable fell through to the Sonnet default, which estimates it at under a third of its real rate.
+const FABLE: ModelPrice = { inputPerM: 10, outputPerM: 50, cacheReadPerM: 0.25, cacheWritePerM: 12.5 };
+
+/**
+ * Rates for one specific model id, checked before the family constants.
+ *
+ * A family constant assumes a generation's prices hold for the next one, and Opus 5.5 is where
+ * that stopped being true: it shipped BELOW the family at $4/$20, and its cache reads are 0.05x
+ * base input rather than the usual 0.1x, so neither number can be derived from the family row.
+ * Every rate here is from Anthropic's published table, 5-minute cache writes:
+ * https://platform.claude.com/docs/en/about-claude/pricing
+ */
+const PER_ID: Record<string, ModelPrice> = {
+  'claude-opus-5-5': { inputPerM: 4, outputPerM: 20, cacheReadPerM: 0.2, cacheWritePerM: 5 },
+};
 
 /** When the model id is unknown, assume Sonnet (the historical default). */
 const DEFAULT_PRICE: ModelPrice = SONNET;
@@ -44,6 +59,9 @@ export function normalizeModel(model: string | undefined | null): string {
 /** Resolve a model id to its price row by family, falling back to Sonnet. */
 export function priceFor(model: string | undefined | null): ModelPrice {
   const m = normalizeModel(model).toLowerCase();
+  const exact = PER_ID[m];
+  if (exact) return exact;
+  if (m.includes('fable')) return FABLE;
   if (m.includes('opus')) return OPUS;
   if (m.includes('haiku')) return HAIKU;
   if (m.includes('sonnet')) return SONNET;
