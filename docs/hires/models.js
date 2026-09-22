@@ -4,7 +4,6 @@ window.HIRE_MODELS = {
   "updated": "2026-09-22",
   "claude": [
     "claude-opus-5-5",
-    "claude-opus-5-5[1m]",
     "claude-opus-4-8",
     "claude-opus-4-8[1m]",
     "claude-sonnet-4-6",
