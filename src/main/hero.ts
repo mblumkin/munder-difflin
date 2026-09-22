@@ -12,8 +12,11 @@ import { dirname } from 'node:path';
 import { getText } from './fetchText';
 import { parseHeroPayload, DEFAULT_HERO, type HeroPayload } from '../shared/heroPayload';
 
+// The fork this app is built from, not upstream: a hero edit only reaches our installed builds
+// if they fetch OUR main. Pointing at upstream meant a change here shipped to nobody until
+// upstream happened to make it too (AEON-1674, same reasoning as modelCatalog.ts's CATALOG_URL).
 const HERO_URL =
-  'https://raw.githubusercontent.com/chaitanyagiri/munder-difflin/main/docs/hero.json';
+  'https://raw.githubusercontent.com/mblumkin/munder-difflin/main/docs/hero.json';
 /** Plan copy and sponsors change on a human timescale. */
 const TTL_MS = 6 * 60 * 60 * 1000;
 
