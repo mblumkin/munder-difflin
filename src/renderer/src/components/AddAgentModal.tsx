@@ -95,7 +95,7 @@ Return EXACTLY this shape (omit optional fields you don't need; keep the spec st
   "description": "one-line role — what this agent is for",
   "goal": "standing directive injected on every prompt — specific and outcome-oriented",
   "provider": "claude",
-  "model": "claude-fable-5-1",
+  "model": "claude-fable-5-1[1m]",
   "capabilities": ["code-review", "docs"],
   "isolate": false,
   "tokenCap": 2000000,
@@ -103,7 +103,7 @@ Return EXACTLY this shape (omit optional fields you don't need; keep the spec st
 }
 
 Rules:
-- "provider" MUST be one of: cursor | claude | codex | antigravity. "model" must be a real model id for that provider (e.g. gpt-5.6-luna-high, claude-fable-5-1, gpt-5-codex, "Gemini 3.1 Pro (High)").
+- "provider" MUST be one of: cursor | claude | codex | antigravity. "model" must be a real model id for that provider (e.g. gpt-5.6-luna-high, claude-fable-5-1[1m], gpt-5-codex, "Gemini 3.1 Pro (High)").
 - Do NOT include shell commands or any flags beyond these fields.
 - Make "description" + "goal" concrete enough that the agent knows exactly what to do on its first turn.
 

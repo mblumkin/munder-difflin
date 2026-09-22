@@ -182,7 +182,7 @@ export const AGENT_PROVIDER_PRESETS: AgentProviderPreset[] = [
     // Matches the "give Michael a bigger model" advisory and the Recommended tag on the
     // orchestrator picker. Fable 5.1 is Anthropic's model for long-horizon agentic work, which is
     // what the orchestrator does all day.
-    recommendedOrchestratorModel: 'claude-fable-5-1',
+    recommendedOrchestratorModel: 'claude-fable-5-1[1m]',
     resumeFlag: '--resume',
     // Official Claude Code install (npm global). Used by the missing-CLI auto-install.
     installCommand: 'npm install -g @anthropic-ai/claude-code',
