@@ -1,7 +1,8 @@
 {
   "_comment": "Source of truth for model suggestions on the site. Update by hand or run: python3 scripts/build-data.py --sync-models (scrapes upstream's config.ts and merges). Manifests may use ANY model string - these are suggestions, not validation.",
-  "updated": "2026-09-04",
+  "updated": "2026-09-22",
   "claude": [
+    "claude-opus-5-5",
     "claude-opus-4-8",
     "claude-opus-4-8[1m]",
     "claude-sonnet-4-6",
@@ -25,6 +26,8 @@
   ],
   "codex": [
     "gpt-6-astra",
+    "gpt-6-sol",
+    "gpt-6-luna",
     "gpt-5.6-sol",
     "gpt-5.6-terra",
     "gpt-5.6-luna"
