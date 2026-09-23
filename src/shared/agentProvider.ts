@@ -233,9 +233,16 @@ export const AGENT_PROVIDER_PRESETS: AgentProviderPreset[] = [
     canReceiveInbox: true,
     initialPromptFlag: undefined,
     positionalInitialPrompt: true,
-    // Codex's long-context coding model for the orchestrator role. // TODO-verify
-    // the exact codex CLI model id (couldn't install the codex CLI to confirm).
-    recommendedOrchestratorModel: 'gpt-5-codex',
+    // AEON-1685: was 'gpt-5-codex', which is not a row in this provider's catalog and has
+    // not been since the list moved to the GPT-6 / GPT-5.6 generation. A recommended model is
+    // the PRESELECTED value of a plain <select> whose options are the catalog rows, so an id
+    // with no row cannot be displayed: the picker showed something other than what would be
+    // spawned. `undefined` means "pass no --model flag" and lets the codex CLI pick its own
+    // default -- the same shape grok, kimi, opencode and custom already use, and the safe
+    // choice while the exact live codex ids remain unconfirmed (the old TODO-verify here was
+    // never resolved). Naming a specific GPT-6 row instead is a product call, not a mechanical
+    // one; this change makes the picker honest without making that call.
+    recommendedOrchestratorModel: undefined,
     // Codex resumes via a SUBCOMMAND, not a flag: `codex resume [OPTIONS]
     // [SESSION_ID]`. A `--resume <id>` flag does not exist, which is why restarts
     // used to silently start a brand-new session instead of continuing.
