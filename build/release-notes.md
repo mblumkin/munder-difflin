@@ -1,4 +1,4 @@
-- **Electron 44 and a zero-row dependency audit.**
-- **The packaged app is now checked for its natives and sidecars.**
-- **electron-builder can package this app again.**
-- **Terminal paste no longer wins the dictation race.**
+- **Opus 5.5, Fable 5.1 and GPT-6 Sol/Luna are in the model pickers.**
+- **The model list updates without an app update.**
+- **Cost estimates are right for Opus 5.5 and Fable.**
+- **The orchestrator picker no longer starts blank.**

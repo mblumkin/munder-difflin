@@ -6,6 +6,55 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.5.9] — 2026-09-23 (local-only, not a public release)
+
+A model-catalog release. The pickers learn this month's models, and the catalog
+behind them stops being something only an app update can change.
+
+### Added
+
+- Claude Opus 5.5 (and its 1M-context variant), Fable 5.1 · 1M, and GPT-6 Sol
+  and Luna in the model pickers. `claude-opus-5` and `claude-sonnet-5` are
+  backfilled into the site's suggestion list, which had drifted behind the app's.
+- A test asserting every provider preset's recommended orchestrator model is a
+  real row in that provider's catalog. It was written for one bug and found a
+  second while being written, which is what earns it a place in the suite.
+
+### Changed
+
+- The runtime model catalog and the hero payload are fetched from this fork
+  rather than upstream. Adding a model used to mean shipping a build, and only
+  reached installed copies if upstream happened to add it too; now it is an edit
+  to a JSON file on main that every installed copy picks up within the TTL. The
+  baked catalog stays the floor, so the pickers are never empty and never wait on
+  the network.
+- Cost estimation is per model id where a family rate no longer holds. Opus 5.5
+  shipped below the Opus family at $4/$20 with cache reads at 0.05x base rather
+  than the usual 0.1x, so neither number was derivable from the family row, and
+  Fable had no branch at all and fell through to the Sonnet default at under a
+  third of its real rate. This only affects the offline transcript reconciler;
+  the live path has always used Claude's own per-request figure.
+
+### Fixed
+
+- The orchestrator picker rendered blank instead of showing its own default. The
+  recommended model is the value the picker preselects, and it named an id that
+  existed in no catalog, so a controlled `<select>` had nothing to match. On first
+  run the onboarding wizard then persisted a value the user had never seen. Two
+  presets were affected, Claude and codex.
+
+### Removed
+
+- CI from the fork, and an orphaned test that outlived the gate it belonged to.
+
+### Notes
+
+- Still local-only: `publishedVersion` stays at 0.4.6 and the download links keep
+  pointing there. Writing 0.5.9 download URLs for artifacts nobody published is
+  the exact failure `check:links` exists to prevent, inverted.
+- Includes an upstream sync through chaitanyagiri `c7c8921f` (docs, site and
+  legal copy).
+
 ## [0.5.8] — 2026-09-21 (local-only, not a public release)
 
 A dependency and toolchain release. `npm audit` goes from 27 rows to zero, the
