@@ -1,7 +1,7 @@
 /* AUTO-GENERATED from models.json by scripts/build-data.py — do not edit.
    Update models.json (or run build-data.py --sync-models), then rebuild. */
 window.HIRE_MODELS = {
-  "updated": "2026-09-22",
+  "updated": "2026-09-23",
   "claude": [
     "claude-opus-5-5",
     "claude-opus-5-5[1m]",
@@ -13,6 +13,7 @@ window.HIRE_MODELS = {
     "claude-haiku-4-5-20251001",
     "claude-fable-5",
     "claude-fable-5-1",
+    "claude-fable-5-1[1m]",
     "claude-sonnet-4-6[1m]"
   ],
   "antigravity": [
