@@ -10,6 +10,7 @@ import { freeflowRecorder, useFreeflow } from '@/freeflow/recorder';
 import { useTerminalFontSize } from './terminalFontSize';
 import { isComposingKey } from '@shared/imeGuard';
 import { useRtl } from '@/i18n/useDirection';
+import { pasteClipboardImage } from './clipboardImagePaste';
 
 const EMPTY_QUEUE: QueuedMessage[] = [];
 
@@ -78,6 +79,7 @@ export function MessageQueueComposer({ agent }: MessageQueueComposerProps) {
   // persist in the store, attachments deliberately don't carry over).
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [dragOver, setDragOver] = useState(false);
+  const [pasteError, setPasteError] = useState<string | null>(null);
 
   const addAttachments = (incoming: Attachment[]) =>
     setAttachments((prev) => {
@@ -114,8 +116,12 @@ export function MessageQueueComposer({ agent }: MessageQueueComposerProps) {
     const hasImage = items.some((it) => it.kind === 'file' && it.type.startsWith('image/'));
     if (hasImage) {
       e.preventDefault();
-      const res = await window.cth.saveClipboardImage();
-      if (res.ok) addAttachments([res.file]);
+      setPasteError(null);
+      await pasteClipboardImage(
+        () => window.cth.saveClipboardImage(),
+        (file) => addAttachments([file]),
+        setPasteError
+      );
       return;
     }
     const files = Array.from(e.clipboardData?.files ?? []);
@@ -303,6 +309,13 @@ export function MessageQueueComposer({ agent }: MessageQueueComposerProps) {
           color: ff.error && !(ffMine && ff.status !== 'idle') ? 'var(--cth-coral)' : 'var(--cth-ink-500)',
           whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'
         }}>{ffHint}</span>
+      )}
+
+      {pasteError && (
+        <span role="status" style={{
+          fontSize: 12, lineHeight: '16px', color: 'var(--cth-coral)',
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'
+        }}>{`${t('queueComposer.pasteFailed')}: ${pasteError}`}</span>
       )}
 
       {/* Attached files/images — chips with a remove 'x', above the textarea. */}

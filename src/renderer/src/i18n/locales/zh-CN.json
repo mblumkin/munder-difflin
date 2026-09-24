@@ -1300,6 +1300,7 @@
     "recording": "● 录音中——点击停止转写",
     "transcribing": "转写中…",
     "voice": "语音",
+    "pasteFailed": "图片粘贴失败",
     "busyQueued": "{{name}} 正在忙——{{count}} 条排队中",
     "heldFloor": "暂挂——投递已全楼层暂停",
     "heldDraft": "暂挂——{{name}} 的终端提示行有未发送文本",
