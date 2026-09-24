@@ -25,6 +25,7 @@ import {
 } from 'node:fs';
 import { join, dirname, basename, isAbsolute, relative } from 'node:path';
 import { homedir } from 'node:os';
+import { codexGuardHooksToml, readClaudeBashGuards } from './codexGuardHooks';
 import { spawn, execFile, type ChildProcess } from 'node:child_process';
 import { randomBytes, createHash } from 'node:crypto';
 import type { AgentUsageSample } from './usage';
@@ -2215,6 +2216,7 @@ export class HiveManager {
           config += `\n[[hooks.${ev}]]\n[[hooks.${ev}.hooks]]\ntype = "command"\ncommand = ${JSON.stringify(command)}\ntimeout = 30\n`;
         }
       }
+      config += codexGuardHooksToml(readClaudeBashGuards());
       writeFileSync(join(home, 'config.toml'), config, 'utf8');
 
       // Keep each worker's CODEX_HOME isolated while putting its rollout data
