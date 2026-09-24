@@ -1,4 +1,3 @@
-- **Opus 5.5, Fable 5.1 and GPT-6 Sol/Luna are in the model pickers.**
-- **The model list updates without an app update.**
-- **Cost estimates are right for Opus 5.5 and Fable.**
-- **The orchestrator picker no longer starts blank.**
+- **Codex agents get the same safety guards as Claude agents.**
+- **A failed screenshot paste now says so.**
+- **The hive protocol no longer assumes every agent runs Claude.**

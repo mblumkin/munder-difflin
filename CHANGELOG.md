@@ -6,6 +6,39 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.5.10] - 2026-09-24 (local-only, not a public release)
+
+A guard-parity release. Codex agents stop running without the safety checks Claude
+agents have, and two places where the app said the wrong thing now say the right one.
+
+### Added
+
+- Codex agents get the same pre-command guards as Claude agents. At spawn, every
+  PreToolUse hook in your Claude settings that applies to shell commands
+  (`$CLAUDE_CONFIG_DIR/settings.json` or `~/.claude/settings.json`) is copied into
+  the Codex worker's own config, unchanged. A denied command does not run, and the
+  agent is told why. File edits made through Codex's `apply_patch` are not covered
+  yet.
+
+### Changed
+
+- The hive's `PROTOCOL.md` and `COMMANDS.md` no longer assume every agent runs
+  Claude Code. The protocol says how permission works on each engine, and tells an
+  agent that never gets an approval prompt to hand a refused step to the orchestrator
+  instead of retrying it. The command reference says it applies to Claude Code only.
+
+### Fixed
+
+- Pasting a screenshot into an agent's message box could fail with no sign of it.
+  A failed paste now shows "Image paste failed" with the reason under the box.
+
+### Notes
+
+- Still local-only: `publishedVersion` stays at 0.4.6, so download links keep
+  pointing at the last published build.
+- Guards reach a Codex agent only when it is launched on this build. Agents already
+  running keep the config they were started with.
+
 ## [0.5.9] — 2026-09-23 (local-only, not a public release)
 
 A model-catalog release. The pickers learn this month's models, and the catalog
