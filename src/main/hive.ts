@@ -3454,7 +3454,7 @@ function renderCommandsMd(): string {
   const lines: string[] = [
     '# Claude Code commands',
     '',
-    'Reference of the Claude Code commands available to you. Two kinds:',
+    'Reference of the Claude Code commands. It applies ONLY to an agent running on Claude Code: on any other engine (Codex, Gemini, and others) these slash commands and flags do not exist in your session. Two kinds:',
     '- **slash** commands act ONLY on your own session — you CANNOT run them on another agent\'s terminal.',
     '- **cli** commands run in your shell (Bash) and can target the fleet, spawn, or query.',
     '',
@@ -3474,7 +3474,8 @@ const COMMANDS_MD = renderCommandsMd();
 
 const PROTOCOL_MD = `# Hive protocol
 
-You are one of several Claude agents sharing this hive. Coordination is entirely
+You are one of several agents sharing this hive, and they do not all run on the same
+engine (Claude Code, Codex, and others), so nothing here assumes yours. Coordination is entirely
 file-based; the harness (main process) is the only thing that runs git and the
 only thing that moves messages between agents.
 
@@ -3509,11 +3510,14 @@ The harness fills in \`id\`, \`from\`, \`hops\`, and timestamps.
   don't reply to them, or two agents will loop forever.
 - For anything ambiguous, cross-cutting, or needing sign-off, message \`god\` — the
   god agent clarifies answers for you so you rarely need the human directly.
-- There is NO separate human-approval queue. Human-in-the-loop is native to Claude
-  Code: a tool you run that needs permission prompts in your own session (the human
-  can approve it remotely from their phone via \`/remote-control\`). If you genuinely
-  need a human decision, raise it with \`god\` (a message \`"to": "human"\` is routed to
-  the god/orchestrator, the human's proxy on the floor).
+- There is NO separate human-approval queue, and how a tool call gets permission
+  depends on your engine. On Claude Code it prompts in your own session, and the human
+  can approve it remotely via \`/remote-control\`. Other engines may never prompt at all
+  (Codex here runs with approvals off inside a workspace sandbox): there, a refused or
+  sandbox-denied action is final for this session, so do not retry it or route around
+  it; hand the exact step to \`god\`. If you genuinely need a human decision, raise it
+  with \`god\` (a message \`"to": "human"\` is routed to the god/orchestrator, the
+  human's proxy on the floor).
 - \`board.md\` is the shared plan. Don't edit it directly — \`propose\` changes to \`god\`,
   who is its sole scribe.
 - Re-reading a message you already moved to \`.done/\` is a no-op. Don't reprocess.
@@ -3557,7 +3561,7 @@ or \`Circuit breaker: constrain\` message lands in your inbox, you ARE the probl
 repeating, summarize what you've tried, and do exactly what the message says (constrain = go read-only
 and get god's sign-off before more tool calls). Be **token-frugal**: the floor has a token budget and
 each agent can have its own token limit; crossing it trips the breaker. Prefer references over pasted
-content, and \`/compact\` your own session when context gets heavy.
+content, and compact your own session when context gets heavy (\`/compact\` on Claude Code).
 
 ## Fleet monitoring (orchestrator)
 You (god) are responsible for situational awareness. To see the live state of every agent, read
@@ -3567,7 +3571,7 @@ and \`log.jsonl\` (the event feed). IMPORTANT: \`claude agents\` will NOT show y
 sessions (they're spawned independently) — \`fleet.json\` is your source of truth for them. For a deeper
 look at one agent, read its \`agents/<id>/memory.md\` and \`inbox/\`, or send it a \`query\`. A full
 Claude Code command reference (slash = your own session only; CLI = your shell, can target the fleet)
-is in \`COMMANDS.md\` in the hive root.
+is in \`COMMANDS.md\` in the hive root; it applies only to agents running on Claude Code.
 
 ## Spawning a worker (orchestrator)
 You can start an ephemeral worker yourself. Write ONE JSON file into \`spawn-requests/<id>.json\` in
