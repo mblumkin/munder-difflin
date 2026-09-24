@@ -6,6 +6,25 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.5.11] - 2026-09-24 (local-only, not a public release)
+
+Finishes the Codex guard work 0.5.10 started: file edits are covered now, not just shell
+commands. 0.5.10 was never installed, so this is the release to install.
+
+### Added
+
+- Codex agents get your Claude Code file-edit guards too. Every PreToolUse hook in your
+  Claude settings that applies to Write or Edit is copied into the Codex worker's config
+  under an `apply_patch` matcher, because Codex edits files through `apply_patch`. A guard
+  that understands the patch (the reactor-checkout and outbox guards in `claude-setup` do,
+  from this week) blocks an edit the way it blocks a Claude Write.
+
+### Notes
+
+- Still local-only: `publishedVersion` stays at 0.4.6.
+- Like 0.5.10's shell-command guards, these reach a Codex agent only when it is launched on
+  this build.
+
 ## [0.5.10] - 2026-09-24 (local-only, not a public release)
 
 A guard-parity release. Codex agents stop running without the safety checks Claude
