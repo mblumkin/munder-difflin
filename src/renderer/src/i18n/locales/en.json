@@ -1300,6 +1300,7 @@
     "recording": "● recording — click stop to transcribe",
     "transcribing": "transcribing…",
     "voice": "voice",
+    "pasteFailed": "Image paste failed",
     "busyQueued": "{{name}} is busy — {{count}} queued",
     "heldFloor": "held — delivery paused floor-wide",
     "heldDraft": "held — {{name}}'s terminal has unsent text on its prompt",
