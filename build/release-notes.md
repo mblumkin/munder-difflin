@@ -1,3 +1,3 @@
-- **Codex agents get the same safety guards as Claude agents.**
+- **Codex agents get the same safety guards as Claude agents, for shell commands and file edits.**
 - **A failed screenshot paste now says so.**
 - **The hive protocol no longer assumes every agent runs Claude.**
