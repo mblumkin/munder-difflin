@@ -18,7 +18,7 @@ const home = fs.mkdtempSync(path.join(os.tmpdir(), 'md-codexguard-'));
 const realHome = process.env.HOME;
 process.env.HOME = home; // installCodexHooks reads ~/.claude and ~/.codex via homedir()
 const loadTs = require('./load-ts.cjs');
-const { claudeBashGuards, codexGuardHooksToml } = loadTs('src/main/codexGuardHooks.ts');
+const { claudeGuards, codexGuardHooksToml } = loadTs('src/main/codexGuardHooks.ts');
 const { HiveManager } = loadTs('src/main/hive.ts');
 
 const GUARD = path.join(__dirname, 'fixtures', 'codex-guard-deny.cjs');
@@ -39,15 +39,19 @@ const settings = {
   },
 };
 
-test('only Bash-covering groups are mirrored, deduplicated, with codex-safe timeouts', () => {
-  const got = claudeBashGuards(settings);
+test('Bash groups mirror as Bash, Write/Edit groups as apply_patch, deduplicated, codex-safe timeouts', () => {
+  const got = claudeGuards(settings).bash;
   assert.deepEqual(got.map((h) => h.command), [
     `node "${GUARD}"`, 'bash "$HOME/guards/shared.sh"', 'bash "$HOME/guards/all.sh"',
   ]);
   assert.equal(got[1].timeout, 10);
   assert.equal(got[2].timeout, 30, "Claude's 0 must not become codex's 1-second floor");
-  assert.deepEqual(claudeBashGuards({}), []);
-  assert.equal(codexGuardHooksToml([]), '');
+  // AEON-1706: codex edits files via apply_patch, so file-tool guards mirror there.
+  assert.deepEqual(claudeGuards(settings).applyPatch.map((h) => h.command), [
+    'bash "$HOME/guards/shared.sh"', 'bash "$HOME/guards/write-only.sh"', 'bash "$HOME/guards/all.sh"',
+  ]);
+  assert.deepEqual(claudeGuards({}), { bash: [], applyPatch: [] });
+  assert.equal(codexGuardHooksToml({ bash: [], applyPatch: [] }), '');
 });
 
 test('installCodexHooks writes the mirrored guards into the worker config', () => {
@@ -59,7 +63,11 @@ test('installCodexHooks writes the mirrored guards into the worker config', () =
   const toml = fs.readFileSync(path.join(codexHome, 'config.toml'), 'utf8');
   assert.match(toml, /\[\[hooks\.PreToolUse\]\]\nmatcher = "Bash"\n/);
   assert.ok(toml.includes(`command = ${JSON.stringify(`node "${GUARD}"`)}`));
-  assert.ok(!toml.includes('write-only.sh'), 'a Write|Edit-only guard has no codex tool to match');
+  const groups = toml.split('[[hooks.PreToolUse]]\nmatcher = ');
+  const bashGroup = groups.find((g) => g.startsWith('"Bash"')) || '';
+  const patchGroup = groups.find((g) => g.startsWith('"apply_patch"')) || '';
+  assert.ok(patchGroup.includes('write-only.sh'), 'a Write|Edit guard is mirrored under apply_patch (AEON-1706)');
+  assert.ok(!bashGroup.includes('write-only.sh'), 'and not under Bash');
 });
 
 test('CLAUDE_CONFIG_DIR is honoured the way Claude Code honours it', () => {
