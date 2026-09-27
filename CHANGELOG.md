@@ -6,6 +6,26 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.5.12] - 2026-09-27 (local-only, not a public release)
+
+Brings this fork up to date with upstream Munder Difflin main (34 commits, through upstream
+PR #623), on top of 0.5.11's Codex guards.
+
+### Changed
+
+- Grok agents are costed from the usage file their CLI already writes, and an idle one no
+  longer adds a duplicate cost row every beat (upstream #536).
+- The resume terminal is recreated only after the replacement session has started (upstream
+  #575), and `config.json` is written atomically (upstream #578).
+- Upstream's Windows fixes (folder-trust key, Antigravity CLI discovery, test fixtures) and
+  the 0.5.3 site and blog are included.
+
+### Notes
+
+- Still local-only: `publishedVersion` stays at 0.4.6.
+- Upstream's Gemini 3.8 Flash rows in `docs/model-catalog.json` are not taken yet: their
+  baked counterpart is not on upstream main, and this fork's apps fetch that file.
+
 ## [0.5.11] - 2026-09-24 (local-only, not a public release)
 
 Finishes the Codex guard work 0.5.10 started: file edits are covered now, not just shell
