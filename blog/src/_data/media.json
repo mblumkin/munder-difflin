@@ -4186,5 +4186,42 @@
       }
     },
     "youtube": []
+  },
+  "indian-open-source-ai-projects-vs-big-tech": {
+    "title": "Top 10 Indian open source projects that are giving US big tech a tough time",
+    "category": "comparisons",
+    "hero": {
+      "file": "assets/media/indian-open-source-ai-projects-vs-big-tech/hero.png",
+      "alt": "Ten small colourful mascots labelled Laya, Mem0, Munder Difflin, Plane, ToolJet, Khoj, Chatwoot, SigNoz, Supermemory and Composio pull a rope against a sweating grey robot labelled big tech, covered in stickers for Meta, Google, Microsoft, OpenAI, Amazon, SpaceXAI, Salesforce and Atlassian",
+      "prompt": "",
+      "status": "ready"
+    },
+    "inline": {},
+    "youtube": []
+  },
+  "munder-difflin-0-5-3": {
+    "title": "Munder Difflin 0.5.3: Stapler Listens, And It Listens Locally",
+    "category": "story",
+    "hero": {
+      "file": "assets/media/munder-difflin-0-5-3/hero.png",
+      "alt": "Illustration: the Stapler sits inside a dotted box labelled YOUR MACHINE, between an app window where dictated words are being typed and a meeting transcript whose lines are labelled You and Them. A cloud outside the box is crossed out and marked no upload.",
+      "prompt": "",
+      "status": "ready"
+    },
+    "inline": {
+      "note-1": {
+        "file": "assets/media/munder-difflin-0-5-3/note-1.png",
+        "alt": "Illustration: a mail window, a terminal and a notes window all taking dictated text from one Stapler below them, with the hold keys shown as Option on the Mac and Control plus Alt plus Space on Windows and Linux.",
+        "prompt": "",
+        "status": "ready"
+      },
+      "note-2": {
+        "file": "assets/media/munder-difflin-0-5-3/note-2.png",
+        "alt": "Illustration: three agent sidebar rows showing name, ticket key, engine, model, status in plain words, a context gauge and the live action, with a note that dragging the handle keeps your order.",
+        "prompt": "",
+        "status": "ready"
+      }
+    },
+    "youtube": []
   }
 }
