@@ -46,8 +46,8 @@ test('cancel supersedes a delivered steer and replaces an undelivered steer', ()
   for (const id of ['god-1', 'worker-delivered', 'worker-queued']) {
     assert.equal(control.snapshot(id).pendingSteers, 1, `${id} has exactly the retraction`);
     const note = control.takeSteer(id);
-    assert.match(note, /^CLOSING TIME RETRACTED by the human\./);
-    assert.match(note, /supersedes the earlier shutdown steer/);
+    assert.match(note, /^\[CONTROL EVENT #1 · RESUME · issued by the Munder Difflin app\]/);
+    assert.match(note, /supersedes every earlier CLOSING TIME instruction/);
     assert.match(note, /Resume normal operation and accept new work/);
     assert.equal(control.takeSteer(id), undefined, `${id} has no stale shutdown steer`);
   }

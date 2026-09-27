@@ -20,6 +20,14 @@ PR #623), on top of 0.5.11's Codex guards.
 - Upstream's Windows fixes (folder-trust key, Antigravity CLI discovery, test fixtures) and
   the 0.5.3 site and blog are included.
 
+### Fixed
+
+- A closing-time stop can now be lifted without wiping the agent's context. Stop and resume
+  are numbered control events the app issues on the same channel, saved under the hive root:
+  cancelling closing time, or starting the app again after one, sends every stopped agent a
+  resume that supersedes the stop. Inbox messages cannot resume an agent, and an older event
+  never overrides a newer one. Agents stopped by an earlier build get the resume once.
+
 ### Notes
 
 - Still local-only: `publishedVersion` stays at 0.4.6.
