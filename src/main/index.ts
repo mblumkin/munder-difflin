@@ -69,7 +69,7 @@ import { inboxNudgeText } from '../shared/hiveNudge';
 import { resolveGodName } from '../shared/godIdentity';
 import { fetchHireManifest, readHireManifestFiles } from './hire';
 import { parseHireDeepLink, type HireManifest } from '../shared/hire';
-import { ClosingTimeController } from './closingTime';
+import { ClosingTimeController, fileControlStore } from './closingTime';
 import {
   argsWithAutoModeFlag,
   inferAgentProvider,
@@ -3840,7 +3840,9 @@ const closingTime = new ClosingTimeController(
   () => teardownAndQuit(),
   // #7C.2 steering — the graceful interrupt that reaches deeply busy agents
   // at their next hook boundary instead of waiting for a Stop.
-  control
+  control,
+  // AEON-1761: STOP/RESUME control events persist under the hive root.
+  fileControlStore(() => hive.root())
 );
 hive.setRoutedObserver((msg, targets) => closingTime.onRouted(msg, targets));
 ipcMain.handle('app:startClosingTime', () => closingTime.start());
@@ -5112,6 +5114,12 @@ function bootstrapHiveServices(): void {
   control.replaceAutoDeliveryPauses(readConfig().autoDeliveryPausedAgents ?? []);
   archiveOrphanedAgents(); // #57/#58: archive stale archived:false entries with no live PTY
   hive.startRouter();
+  // AEON-1761: a closing-time STOP left standing by the last app session is
+  // lifted with a RESUME on the steer channel, before any seat is restored.
+  try {
+    const agents = hive.registry().agents;
+    closingTime.reopenOnLaunch(Object.keys(agents).filter((id) => !agents[id]?.archived));
+  } catch (e) { console.error('[control-event] reopen on launch:', e); }
   startEphemeralWorkerWatcher(); // poll HIVE_ROOT/spawn-requests → ephemeral workers
   // Phase 2: the loopback secret broker. Bind it BEFORE workers spawn so each spawn can
   // be granted a capability token + the broker URL in its env. Loopback-only, idempotent.
