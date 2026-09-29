@@ -21,14 +21,14 @@
  * the storage it has always used and nothing is lost.
  *
  * Durability rules, in order of how much they matter:
- *   1. Never lose a roster. Every write first copies the previous file into
- *      `roster-backups/`, which is append-only — nothing in it is ever pruned,
- *      overwritten or deleted.
+ *   1. Never lose the current roster. Every write first copies the previous
+ *      file into `roster-backups/`. Keep the newest 50 copies; writes are frequent,
+ *      and an unbounded folder grew past 2,000 backups in one day.
  *   2. Never write a truncated file. Writes go to a temp file and are renamed
  *      into place, so a crash mid-write leaves the previous file untouched.
  *   3. Never let an empty renderer erase a full roster. See `write`.
  */
-import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 /** What the renderer mirrors to disk. The inner agent shape is deliberately
@@ -175,7 +175,7 @@ export class RosterStore {
    * Reset wipes the hive, and the roster must not be left behind as the one
    * survivor — pointing the home folder back here afterwards would show a floor
    * full of agents whose sessions, memory and inboxes no longer exist. Archived
-   * rather than deleted, because a roster is never destroyed, only superseded.
+   * before deletion, so the reset can be recovered from the latest backup.
    */
   archive(): void {
     const home = this.home();
@@ -188,9 +188,8 @@ export class RosterStore {
     } catch { /* a reset must never fail on this */ }
   }
 
-  /** Copy the current roster into the append-only backup folder. Never prunes:
-   *  these files are the last line of defence, and a few KB per write is a price
-   *  worth paying for that. */
+  /** Copy the current roster before changing it, then retain the newest 50
+   *  backups. The new copy is protected even if a clock change misorders it. */
   private backup(home: string, p: string, reason: string): void {
     try {
       if (!existsSync(p)) return;
@@ -198,7 +197,21 @@ export class RosterStore {
       mkdirSync(dir, { recursive: true });
       const stamp = new Date().toISOString().replace(/[:.]/g, '-');
       this.backupSeq += 1;
-      copyFileSync(p, join(dir, `roster-${stamp}-${this.backupSeq}-${reason}.json`));
+      const fresh = `roster-${stamp}-${this.backupSeq}-${reason}.json`;
+      copyFileSync(p, join(dir, fresh));
+      const backups = readdirSync(dir, { withFileTypes: true })
+        .filter((entry) => entry.isFile() && /^roster-.*\.json$/.test(entry.name))
+        .map((entry) => entry.name);
+      if (backups.length <= 50) return;
+      // Timestamps sort lexically, but sequence numbers need numeric ordering:
+      // in the same millisecond, "-10-write" is newer than "-9-write".
+      const older = backups.filter((name) => name !== fresh).sort((a, b) => {
+        const aa = /^roster-(\d{4}-\d\d-\d\dT\d\d-\d\d-\d\d-\d{3}Z)-(\d+)-/.exec(a);
+        const bb = /^roster-(\d{4}-\d\d-\d\dT\d\d-\d\d-\d\d-\d{3}Z)-(\d+)-/.exec(b);
+        if (aa && bb) return aa[1].localeCompare(bb[1]) || Number(aa[2]) - Number(bb[2]);
+        return a.localeCompare(b);
+      });
+      for (const name of older.slice(0, backups.length - 50)) rmSync(join(dir, name));
     } catch { /* a failed backup must never block the write */ }
   }
 }
