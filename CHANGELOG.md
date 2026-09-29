@@ -6,6 +6,23 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.5.14] - 2026-09-29 (local-only, not a public release)
+
+### Fixed
+
+- An idle agent restored after a restart is prompted once to pick up its queued resume. In
+  0.5.13 the resume waited for the agent's next prompt, and a restored agent with no new mail
+  sat stopped for 34 minutes on the first live run.
+- The wake nudge holds while a person is typing in an agent's terminal or has a picker open,
+  so it can no longer merge with a draft and submit it. A drag-dropped path counts as a draft,
+  including one dropped just as the terminal opens, which was previously lost.
+- A nudge counts as delivered only after the terminal write and Enter succeed; a failed write
+  is retried after the cooldown instead of leaving the agent parked.
+
+### Notes
+
+- Still local-only: `publishedVersion` stays at 0.4.6.
+
 ## [0.5.13] - 2026-09-29 (local-only, not a public release)
 
 ### Fixed
