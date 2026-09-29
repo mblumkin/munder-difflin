@@ -411,8 +411,11 @@ export function isTerminalAutomationSafe(ptyId: string, now = Date.now()): boole
  *  Record them before forwarding the bytes so main's wake watchdog sees the
  *  draft deadline in the same PTY write IPC. */
 export function appendDroppedTerminalText(ptyId: string, text: string): void {
-  const entry = pool.get(ptyId);
-  if (!entry || entry.exited || !text) return;
+  if (!text) return;
+  // The drop target is mounted before its effect acquires xterm. A drop in
+  // that narrow interval must still reach the PTY, as it did before this helper.
+  const entry = pool.get(ptyId) ?? acquireTerminal(ptyId);
+  if (entry.exited) return;
   appendUnsubmittedTerminalText(entry, text);
   void window.cth.writePty(ptyId, text, terminalAutomationBlockedUntil(automationStateOf(entry)));
 }
