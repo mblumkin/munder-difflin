@@ -123,7 +123,7 @@ export class WorkerWakeWatchdog {
   }
 
   /** The worker ids that should be nudged right now, in stable registry order.
-   *  Pure decision — the caller types the nudge. */
+   *  An attempt starts cooldown, but only submitted() marks its content heard. */
   decide(facts: readonly WorkerWakeFacts[], now = Date.now()): string[] {
     const out: string[] = [];
     for (const f of facts) {
@@ -149,11 +149,19 @@ export class WorkerWakeWatchdog {
       const lastNudge = this.lastNudgeAt.get(f.agentId) ?? 0;
       if (lastNudge > 0 && now - lastNudge < WORKER_WAKE_COOLDOWN_MS) continue;
       this.lastNudgeAt.set(f.agentId, now);
-      if (newResume) this.announcedResumeSeq.set(f.agentId, f.pendingResumeSeq!);
-      else this.announcedInboxIds.set(f.agentId, inboxIds);
       out.push(f.agentId);
     }
     return out;
+  }
+
+  /** Commit the exact wake that made it through both PTY writes (text + Enter).
+   *  A failed write leaves the event eligible after the attempt cooldown. */
+  submitted(agentId: string, inboxIds: readonly string[], resumeSeq?: number | null): void {
+    if (typeof resumeSeq === 'number' && resumeSeq > 0) {
+      this.announcedResumeSeq.set(agentId, resumeSeq);
+    } else {
+      this.announcedInboxIds.set(agentId, new Set(inboxIds.filter((id) => typeof id === 'string' && id.length > 0)));
+    }
   }
 
   /** Last time this worker was nudged (0 = never) — useful for diagnostics. */
