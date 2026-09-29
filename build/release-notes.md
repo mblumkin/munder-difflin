@@ -1,4 +1,3 @@
-- **Codex agents get the same safety guards as Claude agents, for shell commands and file edits.**
-- **The hive protocol no longer assumes every agent runs Claude.**
-- **Upstream fixes are in, including Grok agent costs.**
-- **Agents stopped at closing time resume with their context.**
+- **Agents restored after a restart now get the closing-time resume they missed.**
+- **An agent that already has the resume is not sent it again.**
+- **Roster backups keep the newest 50 instead of growing forever.**

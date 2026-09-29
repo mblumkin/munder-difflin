@@ -6,6 +6,20 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.5.13] - 2026-09-29 (local-only, not a public release)
+
+### Fixed
+
+- An agent restored after the app restarts now receives the closing-time resume it missed.
+  The app records which agents actually received a resume, and a restored session that never
+  did gets it when its terminal comes back, including an agent that was archived when the
+  app started. On 09-28 a restart right after the resume left the whole floor stopped.
+- Roster backups keep the newest 50 instead of growing without limit.
+
+### Notes
+
+- Still local-only: `publishedVersion` stays at 0.4.6.
+
 ## [0.5.12] - 2026-09-27 (local-only, not a public release)
 
 Brings this fork up to date with upstream Munder Difflin main (34 commits, through upstream
