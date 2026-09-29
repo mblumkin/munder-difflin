@@ -1,3 +1,3 @@
-- **Agents restored after a restart now get the closing-time resume they missed.**
-- **An agent that already has the resume is not sent it again.**
-- **Roster backups keep the newest 50 instead of growing forever.**
+- **An idle agent restored after a restart now gets its resume without waiting for new mail.**
+- **A wake nudge no longer types over something you are typing, or a path you just dropped.**
+- **A failed nudge is retried instead of being counted as sent.**
