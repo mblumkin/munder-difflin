@@ -74,7 +74,7 @@ test('emptying the roster is allowed once the run has written normally', () => {
   assert.equal(store.read().agents.length, 0);
 });
 
-test('every previous version is kept, even within the same millisecond', () => {
+test('recent previous versions are kept, even within the same millisecond', () => {
   // Three writes back-to-back land in one tick, so a timestamp-only filename
   // collides and the later copy silently replaces the earlier one. A backup
   // folder that loses backups is worse than no backup folder.
@@ -89,6 +89,30 @@ test('every previous version is kept, even within the same millisecond', () => {
   const sizes = backupsIn(home).map((f) =>
     JSON.parse(fs.readFileSync(path.join(rosterBackupDir(home), f), 'utf8')).agents.length);
   assert.deepEqual(sizes.sort(), [1, 2], 'both prior versions survived, not just the last');
+});
+
+test('roster backups retain the newest 50 after 60 writes and leave foreign files alone', () => {
+  const home = tmpHome();
+  const store = storeAt(home);
+  const dir = rosterBackupDir(home);
+  assert.equal(store.write(snapshot([{ id: 'version-0' }])).ok, true);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'keep-this.txt'), 'foreign data');
+
+  for (let i = 1; i < 59; i++) {
+    assert.equal(store.write(snapshot([{ id: `version-${i}` }])).ok, true);
+  }
+  const beforeLast = new Set(backupsIn(home));
+  assert.equal(store.write(snapshot([{ id: 'version-59' }])).ok, true);
+
+  const retained = backupsIn(home).filter((name) => /^roster-.*\.json$/.test(name));
+  assert.equal(retained.length, 50, 'only 50 roster backups remain');
+  const fresh = retained.filter((name) => !beforeLast.has(name));
+  assert.equal(fresh.length, 1, 'the sixtieth write made one distinct backup');
+  const saved = JSON.parse(fs.readFileSync(path.join(dir, fresh[0]), 'utf8'));
+  assert.equal(saved.agents[0].id, 'version-58', 'the newest backup holds the previous roster');
+  assert.equal(store.read().agents[0].id, 'version-59', 'the current roster survived');
+  assert.equal(fs.readFileSync(path.join(dir, 'keep-this.txt'), 'utf8'), 'foreign data');
 });
 
 test('a refused write still backs up whatever was on disk', () => {
