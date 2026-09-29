@@ -749,6 +749,10 @@ const api = {
   hiveLog: (n?: number): Promise<unknown[]> => ipcRenderer.invoke('hive:log', n ?? 200),
   hiveMemory: (id: string): Promise<string> => ipcRenderer.invoke('hive:memory', id),
   hiveInbox: (id: string): Promise<HiveMessage[]> => ipcRenderer.invoke('hive:inbox', id),
+  claimWorkerInboxWake: (id: string): Promise<{ status: 'claimed'; token: number } | { status: 'busy' } | { status: 'delivered' }> =>
+    ipcRenderer.invoke('hive:claimWorkerInboxWake', id),
+  completeWorkerInboxWake: (id: string, token: number, sent: boolean): Promise<void> =>
+    ipcRenderer.invoke('hive:completeWorkerInboxWake', id, token, sent),
   /** Voice read-layer: recent message CONTENT (inbox/outbox bodies), REDACTED in
    *  main. Pass { id } for one message, { agentId } to scope to one mailbox, or
    *  {} for the whole floor. Backs Realtime Michael's get_messages. The renderer

@@ -1,12 +1,9 @@
 /**
  * WorkerWakeWatchdog — main-process inbox-wake watchdog for worker agents (#151).
  *
- * The renderer's idle inbox-wake nudge (useHive.ts effect #3) is the ONLY wake
- * path for a worker that has gone quiet at its prompt: it polls on a setInterval
- * in the renderer, so a throttled/occluded window (Chromium suspends background
- * setInterval timers) can miss the moment mail lands and the worker then sits on
- * an undrained inbox forever — the orchestrator ("god") never has this problem
- * because the main process re-engages it on its own heartbeat cadence.
+ * The renderer polls quickly for worker inbox mail; this main-process watchdog
+ * also wakes workers when a throttled/occluded renderer misses that mail. Both
+ * paths share announcement and in-flight state here so only one types a nudge.
  *
  * This watchdog is the worker-side counterpart: on a cadence it finds live
  * workers that are genuinely idle, have newly arrived inbox mail, are not
@@ -25,8 +22,7 @@
  *    prompt the human is deciding on is never typed into,
  *  - a renderer-observed draft or interactive picker blocks a main-process
  *    nudge until the same expiry used by the renderer queue,
- *  - a per-worker cooldown (NUDGE_COOLDOWN_MS) so the watchdog and the renderer
- *    nudge don't stack on top of each other.
+ *  - a per-worker cooldown (NUDGE_COOLDOWN_MS) against repeated watchdog attempts.
  *
  * Deliberately the renderer's own nudge text, and the same type pattern the
  * renderer's submitToPty uses (text first, Enter as a separate keystroke).
@@ -102,6 +98,10 @@ export class WorkerWakeWatchdog {
   /** agentId → inbox ids included in the last nudge. This turns the watchdog
    *  into an edge trigger: a worker is nudged again only when a new id appears. */
   private announcedInboxIds = new Map<string, Set<string>>();
+  /** A renderer queue delivery reserved before it starts typing. The expiry
+   *  releases a reservation if its renderer disappears mid-delivery. */
+  private rendererClaims = new Map<string, { token: number; ids: string[]; until: number }>();
+  private nextRendererToken = 1;
   private announcedResumeSeq = new Map<string, number>();
   /** agentId → timestamp of the last needsHuman hook notification. */
   private lastHumanNeedsAt = new Map<string, number>();
@@ -121,6 +121,7 @@ export class WorkerWakeWatchdog {
   forget(agentId: string, ptyId?: string): void {
     this.lastNudgeAt.delete(agentId);
     this.announcedInboxIds.delete(agentId);
+    this.rendererClaims.delete(agentId);
     this.announcedResumeSeq.delete(agentId);
     this.lastHumanNeedsAt.delete(agentId);
     if (ptyId) this.spawnedAt.delete(ptyId);
@@ -142,6 +143,9 @@ export class WorkerWakeWatchdog {
       const announced = this.announcedInboxIds.get(f.agentId);
       const newInbox = inboxIds.size > 0 && (!announced || Array.from(inboxIds).some((id) => !announced.has(id)));
       if (!newResume && !newInbox) continue;
+      const rendererClaim = this.rendererClaims.get(f.agentId);
+      if (rendererClaim && rendererClaim.until > now) continue;
+      if (rendererClaim) this.rendererClaims.delete(f.agentId);
       if ((f.isGod && !newResume) || !f.ptyId) continue;
       if (f.autoDeliveryPaused || f.paused || f.halted) continue;
       if (f.lastOutputAt <= 0) continue; // never produced output → still booting
@@ -167,6 +171,34 @@ export class WorkerWakeWatchdog {
     } else {
       this.announcedInboxIds.set(agentId, new Set(inboxIds.filter((id) => typeof id === 'string' && id.length > 0)));
     }
+  }
+
+  /** Reserve a worker's currently unread ids for the fast renderer queue.
+   *  A watchdog attempt has already reserved the prompt for its 140ms Enter
+   *  delay; the renderer retries on its next flush instead of typing twice. */
+  claimRendererInbox(agentId: string, inboxIds: readonly string[], now = Date.now()):
+    { status: 'claimed'; token: number } | { status: 'busy' } | { status: 'delivered' } {
+    const ids = Array.from(new Set(inboxIds.filter((id) => typeof id === 'string' && id.length > 0)));
+    if (!ids.length) return { status: 'delivered' };
+    const announced = this.announcedInboxIds.get(agentId);
+    if (announced && ids.every((id) => announced.has(id))) return { status: 'delivered' };
+    const claim = this.rendererClaims.get(agentId);
+    if (claim && claim.until > now) return { status: 'busy' };
+    if (claim) this.rendererClaims.delete(agentId);
+    const lastMainAttempt = this.lastNudgeAt.get(agentId) ?? 0;
+    if (lastMainAttempt > 0 && now - lastMainAttempt < 1_000) return { status: 'busy' };
+    const token = this.nextRendererToken++;
+    this.rendererClaims.set(agentId, { token, ids, until: now + 30_000 });
+    return { status: 'claimed', token };
+  }
+
+  /** Commit only after the renderer confirms both PTY writes. A failed write
+   *  releases the claim so the main beat can still wake the worker. */
+  completeRendererInbox(agentId: string, token: number, sent: boolean, now = Date.now()): void {
+    const claim = this.rendererClaims.get(agentId);
+    if (!claim || claim.token !== token) return;
+    this.rendererClaims.delete(agentId);
+    if (sent && claim.until > now) this.submitted(agentId, claim.ids);
   }
 
   /** Last time this worker was nudged (0 = never) — useful for diagnostics. */
