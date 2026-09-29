@@ -34,6 +34,40 @@ test('nudges an idle worker with undrained inbox mail', () => {
   assert.deepEqual(out, ['alice']);
 });
 
+test('a watchdog attempt makes the renderer retry, then discard already typed mail', () => {
+  const w = new WorkerWakeWatchdog();
+  const now = 200_000;
+  assert.deepEqual(w.decide([fact({ lastOutputAt: now - WORKER_WAKE_IDLE_MS - 1 })], now), ['alice']);
+  assert.equal(w.claimRendererInbox('alice', ['mail-1'], now + 100).status, 'busy');
+  w.submitted('alice', ['mail-1']);
+  assert.equal(w.claimRendererInbox('alice', ['mail-1'], now + 200).status, 'delivered');
+});
+
+test('renderer claim blocks main beat until both PTY writes succeed', () => {
+  const w = new WorkerWakeWatchdog();
+  const now = 200_000;
+  const claim = w.claimRendererInbox('alice', ['mail-1'], now);
+  assert.equal(claim.status, 'claimed');
+  assert.deepEqual(w.decide([fact({ lastOutputAt: now - WORKER_WAKE_IDLE_MS - 1 })], now + 1), []);
+  w.completeRendererInbox('alice', claim.token, true, now + 500);
+  assert.deepEqual(w.decide([fact({ lastOutputAt: now - WORKER_WAKE_IDLE_MS - 1 })], now + 501), []);
+  assert.equal(w.claimRendererInbox('alice', ['mail-1'], now + 502).status, 'delivered');
+  assert.equal(w.claimRendererInbox('alice', ['mail-1', 'mail-2'], now + 503).status, 'claimed',
+    'fresh mail stays on the fast renderer path');
+});
+
+test('failed or abandoned renderer claim leaves worker mail eligible for the main beat', () => {
+  const w = new WorkerWakeWatchdog();
+  const now = 200_000;
+  const claim = w.claimRendererInbox('alice', ['mail-1'], now);
+  w.completeRendererInbox('alice', claim.token, false, now + 500);
+  assert.deepEqual(w.decide([fact({ lastOutputAt: now - WORKER_WAKE_IDLE_MS - 1 })], now + 501), ['alice']);
+
+  const abandoned = new WorkerWakeWatchdog();
+  abandoned.claimRendererInbox('alice', ['mail-1'], now);
+  assert.deepEqual(abandoned.decide([fact({ lastOutputAt: now - WORKER_WAKE_IDLE_MS - 1 })], now + 30_001), ['alice']);
+});
+
 test('never nudges god, archived agents, or agents without a live pty', () => {
   const w = new WorkerWakeWatchdog();
   w.noteSpawn('p1', 0);

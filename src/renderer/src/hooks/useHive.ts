@@ -18,7 +18,7 @@ import { DEFAULT_CONTEXT_TRIGGER, type ContextRule } from '../../../shared/trigg
 import type { AgentProvider } from '../../../shared/agentProvider';
 import { bridgeOf, providerPreset } from '../../../shared/agentProvider';
 import { isDurableRole, preferredAgentRole, roleForHiveSpawn } from '../../../shared/agentRole';
-import { inboxNudgeText } from '../../../shared/hiveNudge';
+import { inboxNudgeText, isInboxNudge } from '../../../shared/hiveNudge';
 import { resolveGodName } from '../../../shared/godIdentity';
 import { acquireTerminal, resetTerminal, isTerminalAutomationSafe } from '@/components/terminalPool';
 import { canDeliverToAgent, deliverWithAcknowledgement, checkPrecondition } from './queueDelivery';
@@ -675,8 +675,9 @@ export function useHive(config: HarnessConfig | null): void {
     return () => clearInterval(iv);
   }, [config?.onboardingComplete]);
 
-  // 3) Wake agents holding unread inbox messages. The assistant is send-only
-  //    (it never receives inbox mail), so it's excluded.
+  // 3) Poll unread inbox mail quickly, including workers. The main watchdog
+  //    backs workers up if renderer timers are throttled; effect #4 claims each
+  //    worker nudge against the watchdog before typing it.
   //
   //    QUEUES the nudge rather than typing it. This loop used to write straight
   //    into the terminal, which made it the one automatic writer that could land
@@ -837,8 +838,36 @@ export function useHive(config: HarnessConfig | null): void {
       const flightKey = `${srcId}:${next.id}`;
       if (inFlight.has(flightKey)) return { sent: false };
       inFlight.add(flightKey);
-      lastFlush.current[target.id] = now;
+      let wakeClaim: number | null = null;
       try {
+        if (!target.isGod && srcId === target.id && isInboxNudge(next.text)) {
+          // The main beat may have typed the same mail after this item was
+          // queued. Wait for earlier writes and terminal readiness before the
+          // claim, so its 30s crash-recovery lease covers only our own typing.
+          try {
+            await (writeChains.get(target.ptyId) ?? Promise.resolve()).catch(() => {});
+            await waitForTerminalReady(target.ptyId, inferAgentProvider(target.command, target.provider));
+          } catch { return { sent: false }; }
+          const current = useStore.getState().agents.find((a) => a.id === target.id);
+          const readyAt = Date.now();
+          if (!current?.ptyId || current.ptyId !== target.ptyId
+            || !canDeliverToAgent(current.status, ptyQuietMs(current.ptyId, readyAt), QUIESCE_IDLE_MS)
+            || (bootGraceUntil.current[current.id] ?? 0) >= readyAt
+            || !isTerminalAutomationSafe(current.ptyId, readyAt)) return { sent: false };
+          const currentControl = await window.cth.controlSnapshot(current.id);
+          if (currentControl?.autoDeliveryPaused && !next.manual) return { sent: false };
+          // The atomic claim also holds the beat while we type.
+          let claim: Awaited<ReturnType<typeof window.cth.claimWorkerInboxWake>>;
+          try { claim = await window.cth.claimWorkerInboxWake(target.id); }
+          catch { return { sent: false }; } // main watchdog remains the fallback
+          if (claim.status === 'delivered') {
+            removeQueuedMessage(srcId, next.id);
+            return { sent: false };
+          }
+          if (claim.status === 'busy') return { sent: false };
+          wakeClaim = claim.token;
+        }
+        lastFlush.current[target.id] = Date.now();
         const sent = await deliverWithAcknowledgement(
           // `instruction` (when present) is the authoritative text to type into
           // the PTY; UI/card surfaces continue to show the readable `text`.
@@ -864,6 +893,11 @@ export function useHive(config: HarnessConfig | null): void {
             }
           }
         );
+        if (wakeClaim !== null) {
+          try { await window.cth.completeWorkerInboxWake(target.id, wakeClaim, sent); }
+          catch { /* the claim expires; the main watchdog still sees the inbox */ }
+          wakeClaim = null;
+        }
         if (sent) {
           delete sendFailures[next.id];
           return { sent: true, message: next };
@@ -883,6 +917,10 @@ export function useHive(config: HarnessConfig | null): void {
         }
         return { sent: false };
       } finally {
+        if (wakeClaim !== null) {
+          try { await window.cth.completeWorkerInboxWake(target.id, wakeClaim, false); }
+          catch { /* expiry releases an abandoned claim */ }
+        }
         inFlight.delete(flightKey);
       }
     };

@@ -3509,6 +3509,19 @@ ipcMain.handle('hive:tasks', () => hive.tasks());
 ipcMain.handle('hive:log', (_evt, n: unknown) => hive.logTail(typeof n === 'number' ? n : 200));
 ipcMain.handle('hive:memory', (_evt, id: unknown) => (typeof id === 'string' ? hive.memory(id) : ''));
 ipcMain.handle('hive:inbox', (_evt, id: unknown) => (typeof id === 'string' ? hive.inbox(id) : []));
+// Renderer queue and main watchdog arbitrate worker inbox nudges through one
+// main-process record. Claim is synchronous on the main event loop, so a beat
+// cannot interleave between checking freshness and reserving the prompt.
+ipcMain.handle('hive:claimWorkerInboxWake', (_evt, agentId: unknown) => {
+  if (typeof agentId !== 'string' || !agentId || agentId === hive.registry()?.godId || !ptyForAgent(agentId)) {
+    return { status: 'busy' as const };
+  }
+  return workerWake.claimRendererInbox(agentId, hive.inbox(agentId).map((m) => m.id).filter(Boolean));
+});
+ipcMain.handle('hive:completeWorkerInboxWake', (_evt, agentId: unknown, token: unknown, sent: unknown) => {
+  if (typeof agentId !== 'string' || typeof token !== 'number' || typeof sent !== 'boolean') return;
+  workerWake.completeRendererInbox(agentId, token, sent);
+});
 // Voice read-layer: recent message CONTENT (inbox/outbox bodies), REDACTED
 // main-side by hive.voiceMessages(). The renderer/voice layer never sees a raw
 // body — secrets are stripped here, before the result crosses IPC.
@@ -5169,14 +5182,12 @@ function bootstrapHiveServices(): void {
 const WORKER_WAKE_POLL_MS = 15_000;
 let workerWakeTimer: ReturnType<typeof setInterval> | null = null;
 
-/** Type the renderer's guarded nudge into one worker's PTY — text first, Enter a
+/** Type a guarded nudge into one worker's PTY — text first, Enter a
  *  tick later (the exact submitToPty pattern: a single-chunk write would land the
  *  "\r" inside the input box and never submit). Best-effort + never throws. */
 function nudgeWorker(ptyId: string, ids: string[] = [], notice?: string, onSubmitted?: () => void): void {
-  // Same text the renderer queues (#187's inboxNudgeText), so the two wake paths
-  // produce byte-identical nudges: the queue's one-pending rule recognises either
-  // via isInboxNudge, and a watchdog nudge names its ids so the agent can still
-  // tell "I filed this last turn" from "woken for nothing".
+  // Same text the renderer queues (#187's inboxNudgeText), so either path names
+  // the message ids and the agent can distinguish filed mail from an empty wake.
   const wrote = ptyManager.write(ptyId, notice ?? inboxNudgeText(ids));
   if (!wrote.ok) { console.warn(`[worker-wake] write failed for ${ptyId}: ${wrote.error}`); return; }
   setTimeout(() => {
@@ -5188,10 +5199,9 @@ function nudgeWorker(ptyId: string, ids: string[] = [], notice?: string, onSubmi
   }, 140);
 }
 
-/** Main-process inbox-wake beat (issue #151, fix A): the renderer's idle nudge
- *  (useHive.ts) is the only path that wakes a worker parked on an undrained
- *  inbox — and it lives on a setInterval in the renderer, which a throttled or
- *  occluded window stops honoring. This beat is the renderer-INDEPENDENT fallback:
+/** Main-process inbox-wake beat (issue #151, fix A): the renderer's fast idle
+ *  nudge lives on a setInterval, which a throttled or occluded window may stop
+ *  honoring. This beat is the renderer-independent fallback:
  *  it gathers live-worker facts (PTY quiescence, inbox depth, control flags) and
  *  lets WorkerWakeWatchdog.decide apply the exact renderer guards (idle-only,
  *  post-boot-grace, not paused/halted, no pending HITL, cooldown, and the
