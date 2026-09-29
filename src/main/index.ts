@@ -5163,7 +5163,7 @@ let workerWakeTimer: ReturnType<typeof setInterval> | null = null;
 /** Type the renderer's guarded nudge into one worker's PTY — text first, Enter a
  *  tick later (the exact submitToPty pattern: a single-chunk write would land the
  *  "\r" inside the input box and never submit). Best-effort + never throws. */
-function nudgeWorker(ptyId: string, ids: string[] = [], notice?: string): void {
+function nudgeWorker(ptyId: string, ids: string[] = [], notice?: string, onSubmitted?: () => void): void {
   // Same text the renderer queues (#187's inboxNudgeText), so the two wake paths
   // produce byte-identical nudges: the queue's one-pending rule recognises either
   // via isInboxNudge, and a watchdog nudge names its ids so the agent can still
@@ -5174,6 +5174,7 @@ function nudgeWorker(ptyId: string, ids: string[] = [], notice?: string): void {
     try {
       const submitted = ptyManager.write(ptyId, '\r');
       if (!submitted.ok) console.warn(`[worker-wake] submit failed for ${ptyId}: ${submitted.error}`);
+      else onSubmitted?.();
     } catch (e) { console.error('[worker-wake] submit threw:', e); }
   }, 140);
 }
@@ -5216,9 +5217,12 @@ function runWorkerWakeBeat(): void {
     // The RESUME itself remains on the app-owned hook channel. The PTY text
     // only starts a turn, and a second read avoids waking a seat that already
     // took the event between decision and delivery.
-    if (closingTime.pendingLaunchResumeSeq(agentId) !== null) {
+    const resumeSeq = closingTime.pendingLaunchResumeSeq(agentId);
+    if (resumeSeq !== null) {
       console.log(`[worker-wake] nudging ${agentId} on ${ptyId} for pending control event`);
-      nudgeWorker(ptyId, [], CONTROL_EVENT_PENDING_NUDGE);
+      nudgeWorker(ptyId, [], CONTROL_EVENT_PENDING_NUDGE, () => {
+        if (ptyForAgent(agentId) === ptyId) workerWake.submitted(agentId, [], resumeSeq);
+      });
       continue;
     }
     // Re-read at delivery time, not from the facts snapshot: the agent may have
@@ -5227,7 +5231,9 @@ function runWorkerWakeBeat(): void {
     const ids = hive.inbox(agentId).map((m) => m.id).filter(Boolean);
     if (!ids.length) { console.log(`[worker-wake] ${agentId} drained before delivery, skipping`); continue; }
     console.log(`[worker-wake] nudging ${agentId} on ${ptyId} (${ids.length} pending)`);
-    nudgeWorker(ptyId, ids);
+    nudgeWorker(ptyId, ids, undefined, () => {
+      if (ptyForAgent(agentId) === ptyId) workerWake.submitted(agentId, ids);
+    });
   }
 }
 

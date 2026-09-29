@@ -116,6 +116,7 @@ test('the same inbox mail is not re-announced after the cooldown', () => {
   w.noteSpawn('pty-alice', 0);
   const now = 200_000;
   assert.deepEqual(w.decide([fact()], now), ['alice']);
+  w.submitted('alice', ['mail-1']);
   assert.deepEqual(w.decide([fact()], now + WORKER_WAKE_COOLDOWN_MS - 1), []);
   assert.deepEqual(w.decide([fact({ lastOutputAt: now + WORKER_WAKE_COOLDOWN_MS + 1 - WORKER_WAKE_IDLE_MS - 1 })], now + WORKER_WAKE_COOLDOWN_MS + 1), []);
 });
@@ -125,6 +126,7 @@ test('new mail is announced after the cooldown even while older mail remains', (
   w.noteSpawn('pty-alice', 0);
   const now = 200_000;
   assert.deepEqual(w.decide([fact()], now), ['alice']);
+  w.submitted('alice', ['mail-1']);
 
   const duringCooldown = now + WORKER_WAKE_COOLDOWN_MS - 1;
   assert.deepEqual(w.decide([fact({
@@ -144,6 +146,7 @@ test('filing one of several announced messages does not re-announce the remainde
   w.noteSpawn('pty-alice', 0);
   const now = 200_000;
   assert.deepEqual(w.decide([fact({ inboxIds: ['mail-1', 'mail-2'] })], now), ['alice']);
+  w.submitted('alice', ['mail-1', 'mail-2']);
 
   const later = now + WORKER_WAKE_COOLDOWN_MS + 1;
   assert.deepEqual(w.decide([fact({
@@ -157,12 +160,36 @@ test('draining the inbox resets announcement memory', () => {
   w.noteSpawn('pty-alice', 0);
   const now = 200_000;
   assert.deepEqual(w.decide([fact()], now), ['alice']);
+  w.submitted('alice', ['mail-1']);
   assert.deepEqual(w.decide([fact({ inboxIds: [] })], now + 1), []);
 
   const later = now + WORKER_WAKE_COOLDOWN_MS + 1;
   assert.deepEqual(w.decide([fact({
     lastOutputAt: later - WORKER_WAKE_IDLE_MS - 1
   })], later), ['alice']);
+});
+
+test('failed inbox write remains unannounced and retries after cooldown', () => {
+  const w = new WorkerWakeWatchdog();
+  const now = 200_000;
+  const mail = fact();
+  assert.deepEqual(w.decide([mail], now), ['alice']);
+  // Simulate either text or Enter write failing: no submitted() call.
+  assert.deepEqual(w.decide([mail], now + WORKER_WAKE_COOLDOWN_MS - 1), []);
+  assert.deepEqual(w.decide([mail], now + WORKER_WAKE_COOLDOWN_MS + 1), ['alice']);
+  w.submitted('alice', ['mail-1']);
+  assert.deepEqual(w.decide([mail], now + 2 * WORKER_WAKE_COOLDOWN_MS + 2), []);
+});
+
+test('failed control wake retries; a submitted event is announced once', () => {
+  const w = new WorkerWakeWatchdog();
+  const now = 200_000;
+  const pending = fact({ inboxIds: [], pendingResumeSeq: 7, isGod: true });
+  assert.deepEqual(w.decide([pending], now), ['alice']);
+  assert.deepEqual(w.decide([pending], now + WORKER_WAKE_COOLDOWN_MS + 1), ['alice']);
+  w.submitted('alice', [], 7);
+  assert.deepEqual(w.decide([pending], now + 2 * WORKER_WAKE_COOLDOWN_MS + 2), []);
+  assert.deepEqual(w.decide([{ ...pending, pendingResumeSeq: 8 }], now + 2 * WORKER_WAKE_COOLDOWN_MS + 2), ['alice']);
 });
 
 test('forget clears cooldown + boot grace + HITL state', () => {
