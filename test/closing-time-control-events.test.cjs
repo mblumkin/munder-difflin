@@ -15,6 +15,8 @@ test.mock.timers.enable({ apis: ['setTimeout'] });
 
 const { ControlRegistry } = loadTs('src/main/control.ts');
 const { ClosingTimeController, fileControlStore } = loadTs('src/main/closingTime.ts');
+const { WorkerWakeWatchdog, WORKER_WAKE_IDLE_MS, WORKER_WAKE_BOOT_GRACE_MS,
+  WORKER_WAKE_COOLDOWN_MS, CONTROL_EVENT_PENDING_NUDGE } = loadTs('src/main/workerWake.ts');
 
 const AGENTS = {
   'god-1': { name: 'Michael', isGod: true },
@@ -93,6 +95,61 @@ test('a floor stopped by a build without control events gets one RESUME for ever
   const ev = s.controller.reopenOnLaunch(['pam-1', 'god-1']);
   assert.equal(ev.seq, 1);
   assert.match(drain(s.control, 'pam-1')[0], /^\[CONTROL EVENT #1 · RESUME.*supersedes every earlier CLOSING TIME instruction/);
+});
+
+test('relaunch wakes an idle restored seat with empty inbox on the next notifier beat, then delivers RESUME through control', () => {
+  const root = tmpRoot();
+  session(root).controller.start();
+  const { control, controller } = session(root);
+  const ev = controller.reopenOnLaunch([]);
+  const watchdog = new WorkerWakeWatchdog();
+  const now = 100_000;
+  watchdog.noteSpawn('pty-pam', now - WORKER_WAKE_BOOT_GRACE_MS - 1);
+  const facts = { agentId: 'pam-1', ptyId: 'pty-pam', lastOutputAt: now - WORKER_WAKE_IDLE_MS - 1,
+    inboxIds: [], pendingResumeSeq: controller.pendingLaunchResumeSeq('pam-1'),
+    autoDeliveryPaused: false, paused: false, halted: false };
+  assert.equal(facts.pendingResumeSeq, ev.seq);
+  assert.deepEqual(watchdog.decide([facts], now), ['pam-1']);
+  assert.doesNotMatch(CONTROL_EVENT_PENDING_NUDGE, /resume|closing time|supersedes/i,
+    'the PTY notice contains no RESUME instruction');
+  assert.match(control.takeSteer('pam-1'), /^\[CONTROL EVENT #2 · RESUME/, 'the hook channel supplies RESUME');
+  assert.equal(controller.pendingLaunchResumeSeq('pam-1'), null);
+  assert.deepEqual(watchdog.decide([{ ...facts, pendingResumeSeq: null }], now + WORKER_WAKE_COOLDOWN_MS + 1), [],
+    'a seat that took the event is not prompted again');
+});
+
+test('a busy restored seat is never interrupted, and an already-taken event is not announced', () => {
+  const root = tmpRoot();
+  session(root).controller.start();
+  const { control, controller } = session(root);
+  controller.reopenOnLaunch([]);
+  const watchdog = new WorkerWakeWatchdog();
+  const now = 100_000;
+  watchdog.noteSpawn('pty-jim', now - WORKER_WAKE_BOOT_GRACE_MS - 1);
+  const facts = { agentId: 'jim-1', ptyId: 'pty-jim', lastOutputAt: now - 1,
+    inboxIds: [], pendingResumeSeq: controller.pendingLaunchResumeSeq('jim-1'),
+    autoDeliveryPaused: false, paused: false, halted: false };
+  assert.deepEqual(watchdog.decide([facts], now), [], 'recent output means mid-turn');
+  assert.equal(controller.pendingLaunchResumeSeq('jim-1'), 2, 'the queued event remains for the busy seat');
+  control.takeSteer('jim-1');
+  assert.deepEqual(watchdog.decide([{ ...facts, lastOutputAt: now - WORKER_WAKE_IDLE_MS - 1,
+    pendingResumeSeq: controller.pendingLaunchResumeSeq('jim-1') }], now), []);
+});
+
+test('god receives the same launch control wake, while ordinary inbox wake still excludes god', () => {
+  const root = tmpRoot();
+  session(root).controller.start();
+  const { controller } = session(root);
+  controller.reopenOnLaunch([]);
+  const watchdog = new WorkerWakeWatchdog();
+  const now = 100_000;
+  watchdog.noteSpawn('pty-god', now - WORKER_WAKE_BOOT_GRACE_MS - 1);
+  const facts = { agentId: 'god-1', isGod: true, ptyId: 'pty-god', lastOutputAt: now - WORKER_WAKE_IDLE_MS - 1,
+    inboxIds: [], pendingResumeSeq: controller.pendingLaunchResumeSeq('god-1'),
+    autoDeliveryPaused: false, paused: false, halted: false };
+  assert.deepEqual(watchdog.decide([facts], now), ['god-1']);
+  assert.deepEqual(watchdog.decide([{ ...facts, inboxIds: ['mail-1'], pendingResumeSeq: null }],
+    now + WORKER_WAKE_COOLDOWN_MS + 1), []);
 });
 
 test('reopen on launch never lifts a closing time running in this session', () => {

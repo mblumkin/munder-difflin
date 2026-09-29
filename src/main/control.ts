@@ -126,6 +126,11 @@ export class ControlRegistry {
     return note;
   }
 
+  /** Inspect a queued app control event without consuming its hook delivery. */
+  hasSteerStartingWith(id: string, prefix: string): boolean {
+    return this.map.get(id)?.steerQueue.some((note) => note.startsWith(prefix)) ?? false;
+  }
+
   snapshot(id: string): AgentControlSnapshot {
     const c = this.map.get(id);
     return {
