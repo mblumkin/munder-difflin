@@ -128,3 +128,77 @@ test('inbox text cannot resume an agent', () => {
   assert.equal(controller.controlState().seq, 1);
   for (const id of Object.keys(AGENTS)) assert.equal(control.snapshot(id).pendingSteers, 0, id);
 });
+
+// AEON-1784: a RESUME queued in a process that died before any seat spawned
+// was lost, and the next launch saw state "resume" and issued nothing (live on
+// 09-28: RESUME #3 persisted 3 ms after app-start, the app restarted, no
+// session ever received it). Delivery is recorded when a hook TAKES the note,
+// and seat restore replays the standing RESUME to anyone who never took it.
+test('a RESUME whose process died before delivery is replayed when the seat is restored', () => {
+  const root = tmpRoot();
+  const first = session(root);
+  first.controller.start();
+  for (const id of Object.keys(AGENTS)) drain(first.control, id); // the STOP reached every transcript
+  const second = session(root);
+  assert.equal(second.controller.reopenOnLaunch([]).seq, 2);      // RESUME #2 queued in memory, then the app died
+  const third = session(root);
+  assert.equal(third.controller.reopenOnLaunch([]), null, 'the state is already resume, so launch issues nothing');
+  assert.equal(third.controller.onSeatRestored('pam-1'), true);
+  const notes = drain(third.control, 'pam-1');
+  assert.equal(notes.length, 1);
+  assert.match(notes[0], /^\[CONTROL EVENT #2 · RESUME.*supersedes every earlier CLOSING TIME instruction/);
+  assert.deepEqual(third.controller.controlState().delivered, ['pam-1'], 'taking the note records the delivery');
+});
+
+test('an agent whose hook already took the RESUME is not re-steered after a relaunch (negative control)', () => {
+  const root = tmpRoot();
+  const first = session(root);
+  first.controller.start();
+  for (const id of Object.keys(AGENTS)) drain(first.control, id);
+  const second = session(root);
+  second.controller.reopenOnLaunch([]);
+  drain(second.control, 'pam-1');                                  // Pam took it; Jim did not
+  const third = session(root);
+  assert.equal(third.controller.onSeatRestored('pam-1'), false);
+  assert.equal(third.control.snapshot('pam-1').pendingSteers, 0);
+  assert.equal(third.controller.onSeatRestored('jim-1'), true, 'control: the agent that never took it still gets it');
+  assert.equal(third.control.snapshot('jim-1').pendingSteers, 1);
+});
+
+test('an agent left out of the first-launch RESUME targets gets it on seat restore', () => {
+  const root = tmpRoot();
+  const s = session(root);
+  s.controller.reopenOnLaunch(['god-1']);                          // Pam was archived at the instant of launch
+  assert.equal(s.control.snapshot('pam-1').pendingSteers, 0);
+  assert.equal(s.controller.onSeatRestored('pam-1'), true);
+  assert.match(drain(s.control, 'pam-1')[0], /^\[CONTROL EVENT #1 · RESUME/);
+});
+
+test('seat restore queues one note, not a second copy, when the launch RESUME is still queued', () => {
+  const root = tmpRoot();
+  const first = session(root);
+  first.controller.start();
+  for (const id of Object.keys(AGENTS)) drain(first.control, id);
+  const second = session(root);
+  second.controller.reopenOnLaunch([]);
+  second.controller.onSeatRestored('pam-1');
+  assert.equal(drain(second.control, 'pam-1').length, 1);
+});
+
+test('delivery records do not add transitions to the event log, and seat restore never lifts a live closing time', () => {
+  const root = tmpRoot();
+  const first = session(root);
+  first.controller.start();
+  for (const id of Object.keys(AGENTS)) drain(first.control, id);
+  const second = session(root);
+  second.controller.reopenOnLaunch([]);
+  for (const id of Object.keys(AGENTS)) drain(second.control, id);
+  const log = fs.readFileSync(path.join(root, 'control-events.jsonl'), 'utf8').trim().split('\n');
+  assert.equal(log.length, 2);
+  assert.deepEqual(second.controller.controlState().delivered.sort(), ['god-1', 'jim-1', 'pam-1']);
+  const third = session(root);
+  third.controller.start();                                        // #3 stop, active in this session
+  drain(third.control, 'pam-1');
+  assert.equal(third.controller.onSeatRestored('pam-1'), false);
+  assert.equal(third.control.snapshot('pam-1').pendingSteers, 0);
+});
