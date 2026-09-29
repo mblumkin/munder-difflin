@@ -23,6 +23,8 @@
  *  - delivery paused / agent paused / halted → no nudge (ControlRegistry),
  *  - a recent permission/HITL notification re-arms a block (HITL_REARM_MS) so a
  *    prompt the human is deciding on is never typed into,
+ *  - a renderer-observed draft or interactive picker blocks a main-process
+ *    nudge until the same expiry used by the renderer queue,
  *  - a per-worker cooldown (NUDGE_COOLDOWN_MS) so the watchdog and the renderer
  *    nudge don't stack on top of each other.
  *
@@ -80,6 +82,8 @@ export interface WorkerWakeFacts {
   ptyId?: string;
   /** Timestamp of the PTY's last output (0 = never output). */
   lastOutputAt: number;
+  /** Renderer-observed terminal draft/picker block deadline. */
+  terminalBlockedUntil?: number;
   /** IDs of undrained inbox messages (empty → nothing to wake for). */
   inboxIds: readonly string[];
   /** Launch event still queued on the control channel, if any. */
@@ -142,6 +146,7 @@ export class WorkerWakeWatchdog {
       if (f.autoDeliveryPaused || f.paused || f.halted) continue;
       if (f.lastOutputAt <= 0) continue; // never produced output → still booting
       if (now - f.lastOutputAt < WORKER_WAKE_IDLE_MS) continue; // mid-turn
+      if ((f.terminalBlockedUntil ?? 0) > now) continue; // human owns the prompt
       const spawned = this.spawnedAt.get(f.ptyId) ?? 0;
       if (spawned > 0 && now - spawned < WORKER_WAKE_BOOT_GRACE_MS) continue;
       const lastHuman = this.lastHumanNeedsAt.get(f.agentId) ?? 0;

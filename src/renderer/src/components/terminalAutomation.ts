@@ -108,3 +108,21 @@ export function canAutomateTerminal(
 ): boolean {
   return terminalAutomationBlock(state, now) === null;
 }
+
+/** The main-process watchdog cannot read xterm's local prompt state. Send this
+ * deadline with each human PTY input chunk so its independent wake path holds
+ * the same draft, picker and settle windows as renderer queue delivery. */
+export function terminalAutomationBlockedUntil(
+  state: TerminalAutomationState,
+  now = Date.now()
+): number {
+  if (state.exited) return Number.MAX_SAFE_INTEGER;
+  let until = state.settleUntil;
+  if (state.pickerOpen && !isStaleTerminalPicker(state, now)) {
+    until = Math.max(until, state.pickerOpenedAt === undefined ? Number.MAX_SAFE_INTEGER : state.pickerOpenedAt + STALE_PICKER_MS);
+  }
+  if (state.inputDirty && !isStaleTerminalDraft(state, now)) {
+    until = Math.max(until, state.inputDirtyAt === undefined ? Number.MAX_SAFE_INTEGER : state.inputDirtyAt + STALE_INPUT_MS);
+  }
+  return until > now ? until : 0;
+}

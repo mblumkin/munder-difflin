@@ -10,6 +10,7 @@ const {
   opensInteractiveTerminalUi,
   shouldFollowTerminalOutput,
   terminalAutomationBlock,
+  terminalAutomationBlockedUntil,
   isStaleTerminalPicker,
   STALE_INPUT_MS,
   STALE_PICKER_MS
@@ -40,6 +41,18 @@ test('terminal automation waits for user drafts and interactive states', () => {
   assert.equal(canAutomateTerminal({ ...ready, pickerOpen: true }, 100), false);
   assert.equal(canAutomateTerminal({ ...ready, exited: true }, 100), false);
   assert.equal(canAutomateTerminal({ ...ready, settleUntil: 101 }, 100), false);
+});
+
+test('main watchdog receives the same draft and picker block deadlines', () => {
+  const at = 1_000_000;
+  const ready = { exited: false, pickerOpen: false, inputDirty: false, settleUntil: 0 };
+  assert.equal(terminalAutomationBlockedUntil(ready, at), 0);
+  assert.equal(terminalAutomationBlockedUntil({ ...ready, inputDirty: true, inputDirtyAt: at }, at + 1), at + STALE_INPUT_MS);
+  assert.equal(terminalAutomationBlockedUntil({ ...ready, pickerOpen: true, pickerOpenedAt: at }, at + 1), at + STALE_PICKER_MS);
+  assert.equal(terminalAutomationBlockedUntil({ ...ready, pickerOpen: true, pickerOpenedAt: at,
+    inputDirty: true, inputDirtyAt: at + 100 }, at + 101), at + 100 + STALE_INPUT_MS);
+  assert.equal(terminalAutomationBlockedUntil({ ...ready, settleUntil: at + 300 }, at + 1), at + 300);
+  assert.equal(terminalAutomationBlockedUntil({ ...ready, inputDirty: true, inputDirtyAt: at }, at + STALE_INPUT_MS), 0);
 });
 
 test('an abandoned draft stops blocking delivery once it goes stale', () => {
