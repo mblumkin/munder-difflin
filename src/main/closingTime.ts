@@ -122,6 +122,7 @@ export class ClosingTimeController {
   private acked = new Set<string>();
   private timeoutTimer: NodeJS.Timeout | null = null;
   private teardownTimer: NodeJS.Timeout | null = null;
+  private launchResume: ControlEvent | null = null;
 
   constructor(
     private hive: HiveManager,
@@ -216,9 +217,19 @@ export class ClosingTimeController {
     if (!this.store || this.active) return null;
     const cur = this.controlState();
     if (cur?.kind === 'resume') return null;
-    return cur
+    const ev = cur
       ? this.issueResume(cur, cur.targets, 'app relaunched after closing time')
       : this.issueResume(null, legacyTargets, 'first launch with control events; earlier stops were unrecorded');
+    this.launchResume = ev;
+    return ev;
+  }
+
+  /** A restored seat needs one wake prompt only while its launch RESUME still
+   *  awaits delivery on the control channel. Reading this never consumes it. */
+  pendingLaunchResumeSeq(id: string): number | null {
+    const ev = this.launchResume;
+    if (!ev || !ev.targets.includes(id)) return null;
+    return this.control?.hasSteerStartingWith(id, controlHeader(ev.seq, 'resume')) ? ev.seq : null;
   }
 
   isActive(): boolean {

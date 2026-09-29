@@ -36,6 +36,9 @@
 export const WORKER_WAKE_NUDGE =
   'You have new hive inbox message(s) — read your inbox, act on them now, and move handled ones to inbox/.done/. Act autonomously; only message god if you genuinely need a decision.';
 
+/** A wake prompt only. The event itself must arrive via the control hook. */
+export const CONTROL_EVENT_PENDING_NUDGE = 'A control event is pending. Continue this session to receive it.';
+
 /** No PTY output for this long = genuinely idle (renderer QUIESCE_IDLE_MS). */
 export const WORKER_WAKE_IDLE_MS = 12_000;
 /** Never nudge inside the boot sequence (renderer BOOT_GRACE_MS). */
@@ -79,6 +82,8 @@ export interface WorkerWakeFacts {
   lastOutputAt: number;
   /** IDs of undrained inbox messages (empty → nothing to wake for). */
   inboxIds: readonly string[];
+  /** Launch event still queued on the control channel, if any. */
+  pendingResumeSeq?: number | null;
   /** ControlRegistry snapshot flags. */
   autoDeliveryPaused: boolean;
   paused: boolean;
@@ -93,6 +98,7 @@ export class WorkerWakeWatchdog {
   /** agentId → inbox ids included in the last nudge. This turns the watchdog
    *  into an edge trigger: a worker is nudged again only when a new id appears. */
   private announcedInboxIds = new Map<string, Set<string>>();
+  private announcedResumeSeq = new Map<string, number>();
   /** agentId → timestamp of the last needsHuman hook notification. */
   private lastHumanNeedsAt = new Map<string, number>();
 
@@ -111,6 +117,7 @@ export class WorkerWakeWatchdog {
   forget(agentId: string, ptyId?: string): void {
     this.lastNudgeAt.delete(agentId);
     this.announcedInboxIds.delete(agentId);
+    this.announcedResumeSeq.delete(agentId);
     this.lastHumanNeedsAt.delete(agentId);
     if (ptyId) this.spawnedAt.delete(ptyId);
   }
@@ -125,9 +132,13 @@ export class WorkerWakeWatchdog {
         // A fully drained inbox starts a fresh announcement cycle and bounds the
         // remembered set even for a worker that lives for months.
         this.announcedInboxIds.delete(f.agentId);
-        continue;
       }
-      if (f.isGod || !f.ptyId) continue;
+      const newResume = typeof f.pendingResumeSeq === 'number' && f.pendingResumeSeq > 0
+        && this.announcedResumeSeq.get(f.agentId) !== f.pendingResumeSeq;
+      const announced = this.announcedInboxIds.get(f.agentId);
+      const newInbox = inboxIds.size > 0 && (!announced || Array.from(inboxIds).some((id) => !announced.has(id)));
+      if (!newResume && !newInbox) continue;
+      if ((f.isGod && !newResume) || !f.ptyId) continue;
       if (f.autoDeliveryPaused || f.paused || f.halted) continue;
       if (f.lastOutputAt <= 0) continue; // never produced output → still booting
       if (now - f.lastOutputAt < WORKER_WAKE_IDLE_MS) continue; // mid-turn
@@ -135,12 +146,11 @@ export class WorkerWakeWatchdog {
       if (spawned > 0 && now - spawned < WORKER_WAKE_BOOT_GRACE_MS) continue;
       const lastHuman = this.lastHumanNeedsAt.get(f.agentId) ?? 0;
       if (lastHuman > 0 && now - lastHuman < WORKER_WAKE_HITL_REARM_MS) continue;
-      const announced = this.announcedInboxIds.get(f.agentId);
-      if (announced && !Array.from(inboxIds).some((id) => !announced.has(id))) continue;
       const lastNudge = this.lastNudgeAt.get(f.agentId) ?? 0;
       if (lastNudge > 0 && now - lastNudge < WORKER_WAKE_COOLDOWN_MS) continue;
       this.lastNudgeAt.set(f.agentId, now);
-      this.announcedInboxIds.set(f.agentId, inboxIds);
+      if (newResume) this.announcedResumeSeq.set(f.agentId, f.pendingResumeSeq!);
+      else this.announcedInboxIds.set(f.agentId, inboxIds);
       out.push(f.agentId);
     }
     return out;

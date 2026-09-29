@@ -64,7 +64,7 @@ import { validateBaseUrl, buildAuthHeaders, resolveUpstreamUrl, secretRefFor, IN
 import { RosterStore } from './roster';
 import { buildWorkerLaunch } from './workerLaunch';
 import { ControlRegistry } from './control';
-import { WorkerWakeWatchdog, type WorkerWakeFacts } from './workerWake';
+import { CONTROL_EVENT_PENDING_NUDGE, WorkerWakeWatchdog, type WorkerWakeFacts } from './workerWake';
 import { inboxNudgeText } from '../shared/hiveNudge';
 import { resolveGodName } from '../shared/godIdentity';
 import { fetchHireManifest, readHireManifestFiles } from './hire';
@@ -5163,12 +5163,12 @@ let workerWakeTimer: ReturnType<typeof setInterval> | null = null;
 /** Type the renderer's guarded nudge into one worker's PTY — text first, Enter a
  *  tick later (the exact submitToPty pattern: a single-chunk write would land the
  *  "\r" inside the input box and never submit). Best-effort + never throws. */
-function nudgeWorker(ptyId: string, ids: string[] = []): void {
+function nudgeWorker(ptyId: string, ids: string[] = [], notice?: string): void {
   // Same text the renderer queues (#187's inboxNudgeText), so the two wake paths
   // produce byte-identical nudges: the queue's one-pending rule recognises either
   // via isInboxNudge, and a watchdog nudge names its ids so the agent can still
   // tell "I filed this last turn" from "woken for nothing".
-  const wrote = ptyManager.write(ptyId, inboxNudgeText(ids));
+  const wrote = ptyManager.write(ptyId, notice ?? inboxNudgeText(ids));
   if (!wrote.ok) { console.warn(`[worker-wake] write failed for ${ptyId}: ${wrote.error}`); return; }
   setTimeout(() => {
     try {
@@ -5194,7 +5194,7 @@ function runWorkerWakeBeat(): void {
   const now = Date.now();
   const facts: WorkerWakeFacts[] = [];
   for (const [agentId, a] of Object.entries(reg.agents)) {
-    if (agentId === reg.godId || a?.archived) continue;
+    if (a?.archived) continue;
     const ptyId = ptyForAgent(agentId);
     if (!ptyId) continue;
     const snap = control.snapshot(agentId);
@@ -5204,6 +5204,7 @@ function runWorkerWakeBeat(): void {
       ptyId,
       lastOutputAt: ptyManager.lastOutputAt(ptyId) ?? 0,
       inboxIds: hive.inbox(agentId).map((message) => message.id).filter(Boolean),
+      pendingResumeSeq: closingTime.pendingLaunchResumeSeq(agentId),
       autoDeliveryPaused: snap.autoDeliveryPaused,
       paused: snap.paused,
       halted: snap.halted
@@ -5212,6 +5213,14 @@ function runWorkerWakeBeat(): void {
   for (const agentId of workerWake.decide(facts, now)) {
     const ptyId = ptyForAgent(agentId);
     if (!ptyId) continue;
+    // The RESUME itself remains on the app-owned hook channel. The PTY text
+    // only starts a turn, and a second read avoids waking a seat that already
+    // took the event between decision and delivery.
+    if (closingTime.pendingLaunchResumeSeq(agentId) !== null) {
+      console.log(`[worker-wake] nudging ${agentId} on ${ptyId} for pending control event`);
+      nudgeWorker(ptyId, [], CONTROL_EVENT_PENDING_NUDGE);
+      continue;
+    }
     // Re-read at delivery time, not from the facts snapshot: the agent may have
     // drained the mail during the beat, and a nudge naming ids it already filed
     // is the exact staleness #187 exists to stop.
