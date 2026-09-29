@@ -33,6 +33,7 @@ import {
 } from './terminalRecovery';
 import {
   canAutomateTerminal,
+  appendUnsubmittedTerminalText,
   opensInteractiveTerminalUi,
   shouldFollowTerminalOutput,
   terminalAutomationBlock,
@@ -404,6 +405,16 @@ export function isTerminalAutomationSafe(ptyId: string, now = Date.now()): boole
   const entry = pool.get(ptyId);
   if (!entry) return true;
   return canAutomateTerminal(automationStateOf(entry, now), now);
+}
+
+/** Drag-dropped paths are unsubmitted prompt text, just like keyboard input.
+ *  Record them before forwarding the bytes so main's wake watchdog sees the
+ *  draft deadline in the same PTY write IPC. */
+export function appendDroppedTerminalText(ptyId: string, text: string): void {
+  const entry = pool.get(ptyId);
+  if (!entry || entry.exited || !text) return;
+  appendUnsubmittedTerminalText(entry, text);
+  void window.cth.writePty(ptyId, text, terminalAutomationBlockedUntil(automationStateOf(entry)));
 }
 
 /** Characters a TUI paints around its input line that are not the user's text:
