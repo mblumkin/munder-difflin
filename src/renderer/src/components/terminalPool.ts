@@ -36,6 +36,7 @@ import {
   opensInteractiveTerminalUi,
   shouldFollowTerminalOutput,
   terminalAutomationBlock,
+  terminalAutomationBlockedUntil,
   type TerminalAutomationBlock
 } from './terminalAutomation';
 import { sanitizeTerminalSelection } from './terminalSelection';
@@ -330,7 +331,6 @@ export function acquireTerminal(ptyId: string, theme?: ThemeMap, fontSize = 14):
   // path resets it too.
   term.onData((data) => {
     if (entry.exited) return;
-    window.cth.writePty(ptyId, data);
     // A lone Escape or Ctrl-C closes interactive pickers. Arrow-key escape
     // sequences must NOT clear the block while the user navigates a picker.
     if (data === '\x1b' || data === '\x03') {
@@ -389,6 +389,9 @@ export function acquireTerminal(ptyId: string, theme?: ThemeMap, fontSize = 14):
     // Re-stamped on every keystroke, so the staleness clock measures time since
     // the user last touched the draft — not since they started it.
     if (entry.inputDirty) entry.inputDirtyAt = Date.now();
+    // Main's independent wake watchdog must see the user's draft/picker state
+    // in the SAME IPC that forwards this input, before it can run a wake beat.
+    void window.cth.writePty(ptyId, data, terminalAutomationBlockedUntil(automationStateOf(entry)));
   });
 
   pool.set(ptyId, entry);
@@ -521,7 +524,6 @@ export function clearTerminalDraft(ptyId: string): string {
   // again. Ctrl-U is not undoable in a TUI, so silently discarding it was data
   // loss every time an abandoned-looking draft turned out to be a real one.
   const discarded = entry.lineBuf;
-  void window.cth.writePty(ptyId, '\x15');
   entry.inputDirty = false;
   entry.inputDirtyAt = 0;
   // Reset our model of the line too. Leaving it set made the very next keystroke
@@ -535,6 +537,7 @@ export function clearTerminalDraft(ptyId: string): string {
   // got garbage. The latch is released by a real Enter/Esc/Ctrl-C, or it expires.
   // Let the TUI repaint the cleared line before automation types into it.
   entry.automationSettleUntil = Date.now() + 300;
+  void window.cth.writePty(ptyId, '\x15', terminalAutomationBlockedUntil(automationStateOf(entry)));
   return discarded;
 }
 
@@ -547,8 +550,8 @@ export function clearTerminalDraft(ptyId: string): string {
 export function dismissTerminalPicker(ptyId: string): void {
   const entry = pool.get(ptyId);
   if (!entry || entry.exited) return;
-  void window.cth.writePty(ptyId, '\x1b');
   releasePickerBlock(entry);
+  void window.cth.writePty(ptyId, '\x1b', terminalAutomationBlockedUntil(automationStateOf(entry)));
 }
 
 /** Give this terminal a WebGL renderer for as long as it is on screen.

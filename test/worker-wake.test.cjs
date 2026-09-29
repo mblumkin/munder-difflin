@@ -62,6 +62,15 @@ test('never nudges a mid-turn worker (recent PTY output)', () => {
   assert.deepEqual(out, []);
 });
 
+test('main watchdog holds inbox and control notices behind a terminal draft or picker', () => {
+  const w = new WorkerWakeWatchdog();
+  const now = 200_000;
+  const draft = fact({ terminalBlockedUntil: now + 1 });
+  const picker = fact({ inboxIds: [], pendingResumeSeq: 2, terminalBlockedUntil: now + 1 });
+  assert.deepEqual(w.decide([draft, picker], now), []);
+  assert.deepEqual(w.decide([draft], now + 1), ['alice'], 'block expires at its deadline');
+});
+
 test('never nudges a worker that never produced output (still booting)', () => {
   const w = new WorkerWakeWatchdog();
   w.noteSpawn('pty-alice', 0);

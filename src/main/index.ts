@@ -300,6 +300,9 @@ function standingGoalFromRoster(agentId: string): string | null {
 // background window can't leave a worker parked on an unread inbox forever).
 // HookServer feeds it the hook stream so a permission/HITL prompt blocks nudges.
 const workerWake = new WorkerWakeWatchdog();
+/** xterm's draft/picker state accompanies human `pty:write` IPC input. Main
+ * keeps only the block deadline, never a copy of the user's prompt text. */
+const ptyAutomationBlockedUntil = new Map<string, number>();
 // HookServer needs BOTH: Oscar's control registry (HITL pause/gate/steer/halt via
 // hook returns) AND Jim's breaker (feed recordToolUse on each PostToolUse).
 const hookServer = new HookServer(
@@ -441,6 +444,7 @@ const preservedWorktrees = new Map<string, PreservedWorktree>();
  * handler or node-pty's onExit).
  */
 function teardownPty(id: string): void {
+  ptyAutomationBlockedUntil.delete(id);
   // Ephemeral-worker flag, read BEFORE the cleanup below deletes the entry. All
   // worker deaths (done-release, idle/token reap, manual stop, crash) funnel
   // through here, so this is the one place their floor card gets archived
@@ -3027,9 +3031,14 @@ async function spawnAgentCore(opts: AgentSpawnOptions, owner: Electron.WebConten
   // record matches what the registry and the PTY actually used.
   return { ...res, cwd: opts.cwd, ...(worktreePath ? { worktreePath } : {}), ...(resumeNotFound ? { resumeNotFound: true } : {}), ...(didResume ? { resumed: true } : {}), ...(seedPrompt ? { seedPrompt } : {}) };
 }
-ipcMain.handle('pty:write', (_evt, id: string, data: string) => {
+ipcMain.handle('pty:write', (_evt, id: string, data: string, automationBlockedUntil?: number) => {
   if (typeof id !== 'string' || typeof data !== 'string') return { ok: false, error: 'invalid args' };
-  return ptyManager.write(id, data);
+  const result = ptyManager.write(id, data);
+  if (result.ok && typeof automationBlockedUntil === 'number'
+      && Number.isFinite(automationBlockedUntil) && automationBlockedUntil >= 0) {
+    ptyAutomationBlockedUntil.set(id, automationBlockedUntil);
+  }
+  return result;
 });
 ipcMain.handle('pty:resize', (_evt, id: string, cols: number, rows: number) => {
   if (typeof id !== 'string' || typeof cols !== 'number' || typeof rows !== 'number') return { ok: false, error: 'invalid args' };
@@ -5185,9 +5194,10 @@ function nudgeWorker(ptyId: string, ids: string[] = [], notice?: string, onSubmi
  *  occluded window stops honoring. This beat is the renderer-INDEPENDENT fallback:
  *  it gathers live-worker facts (PTY quiescence, inbox depth, control flags) and
  *  lets WorkerWakeWatchdog.decide apply the exact renderer guards (idle-only,
- *  post-boot-grace, not paused/halted, no pending HITL, cooldown), then types the
- *  same nudge the renderer would have. God is never a candidate (its heartbeat
- *  path already re-engages it). */
+ *  post-boot-grace, not paused/halted, no pending HITL, cooldown, and the
+ *  renderer-reported terminal draft/picker deadline), then types the nudge.
+ *  God is a candidate only for a pending launch control event; its ordinary
+ *  inbox wake is handled by its heartbeat. */
 function runWorkerWakeBeat(): void {
   if (!hive.enabled()) return;
   const reg = hive.registry();
@@ -5204,6 +5214,7 @@ function runWorkerWakeBeat(): void {
       isGod: agentId === reg.godId,
       ptyId,
       lastOutputAt: ptyManager.lastOutputAt(ptyId) ?? 0,
+      terminalBlockedUntil: ptyAutomationBlockedUntil.get(ptyId) ?? 0,
       inboxIds: hive.inbox(agentId).map((message) => message.id).filter(Boolean),
       pendingResumeSeq: closingTime.pendingLaunchResumeSeq(agentId),
       autoDeliveryPaused: snap.autoDeliveryPaused,
