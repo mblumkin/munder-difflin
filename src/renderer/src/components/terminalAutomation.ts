@@ -126,3 +126,16 @@ export function terminalAutomationBlockedUntil(
   }
   return until > now ? until : 0;
 }
+
+/** A file drop writes straight to the PTY, bypassing xterm's onData handler.
+ *  Include its text in the same draft model keyboard input updates. */
+export function appendUnsubmittedTerminalText(
+  state: { lineBuf: string; inputDirty: boolean; inputDirtyAt: number },
+  text: string,
+  now = Date.now()
+): void {
+  if (!text) return;
+  state.lineBuf += text;
+  state.inputDirty = state.lineBuf.length > 0;
+  if (state.inputDirty) state.inputDirtyAt = now;
+}

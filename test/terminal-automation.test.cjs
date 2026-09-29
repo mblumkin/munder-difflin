@@ -6,6 +6,7 @@ const loadTs = require('./load-ts.cjs');
 
 const {
   canAutomateTerminal,
+  appendUnsubmittedTerminalText,
   isStaleTerminalDraft,
   opensInteractiveTerminalUi,
   shouldFollowTerminalOutput,
@@ -53,6 +54,18 @@ test('main watchdog receives the same draft and picker block deadlines', () => {
     inputDirty: true, inputDirtyAt: at + 100 }, at + 101), at + 100 + STALE_INPUT_MS);
   assert.equal(terminalAutomationBlockedUntil({ ...ready, settleUntil: at + 300 }, at + 1), at + 300);
   assert.equal(terminalAutomationBlockedUntil({ ...ready, inputDirty: true, inputDirtyAt: at }, at + STALE_INPUT_MS), 0);
+});
+
+test('a dropped path joins the unsent prompt and blocks main wake even without a keyboard event', () => {
+  const at = 1_000_000;
+  const draft = { lineBuf: 'please inspect ', inputDirty: true, inputDirtyAt: at - 100 };
+  appendUnsubmittedTerminalText(draft, '/tmp/a\\ b.png ', at);
+  assert.equal(draft.lineBuf, 'please inspect /tmp/a\\ b.png ');
+  assert.equal(draft.inputDirty, true);
+  assert.equal(draft.inputDirtyAt, at);
+  const block = terminalAutomationBlockedUntil({ exited: false, pickerOpen: false,
+    inputDirty: draft.inputDirty, inputDirtyAt: draft.inputDirtyAt, settleUntil: 0 }, at);
+  assert.equal(block, at + STALE_INPUT_MS);
 });
 
 test('an abandoned draft stops blocking delivery once it goes stale', () => {
