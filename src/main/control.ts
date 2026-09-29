@@ -42,6 +42,11 @@ interface AgentControl {
 
 export class ControlRegistry {
   private readonly map = new Map<string, AgentControl>();
+  /** Told about every note a hook actually takes. A queued note lives only in
+   *  this process, so an owner that must know a note ARRIVED (a control event)
+   *  records it here rather than at steer() time (AEON-1784). */
+  private onTaken: ((id: string, note: string) => void) | null = null;
+  observeTakes(fn: (id: string, note: string) => void): void { this.onTaken = fn; }
 
   private ensure(id: string): AgentControl {
     let c = this.map.get(id);
@@ -113,7 +118,13 @@ export class ControlRegistry {
   }
 
   /** Dequeue one pending steer note for delivery, or undefined. */
-  takeSteer(id: string): string | undefined { return this.map.get(id)?.steerQueue.shift(); }
+  takeSteer(id: string): string | undefined {
+    const note = this.map.get(id)?.steerQueue.shift();
+    if (note !== undefined) {
+      try { this.onTaken?.(id, note); } catch (e) { console.error('[control] take observer:', e); }
+    }
+    return note;
+  }
 
   snapshot(id: string): AgentControlSnapshot {
     const c = this.map.get(id);

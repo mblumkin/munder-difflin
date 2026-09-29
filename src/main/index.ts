@@ -3013,6 +3013,11 @@ async function spawnAgentCore(opts: AgentSpawnOptions, owner: Electron.WebConten
   if (res.ok) analytics.track('agent_spawned', { provider });
   else analytics.track('agent_spawn_failed', { provider, reason: spawnFailReason(res.error) });
   syncKeepAwake(); // arm the power-save blocker while ≥1 agent PTY is alive (#18)
+  // AEON-1784: a resumed transcript may still hold a closing-time STOP whose
+  // RESUME was queued in an earlier process, or never addressed to this agent.
+  if (res.ok && didResume && opts.hive?.id) {
+    try { closingTime.onSeatRestored(opts.hive.id); } catch (e) { console.error('[control-event] seat restore:', e); }
+  }
   // Hand the resolved worktree path back to the renderer so it can persist it on
   // the agent (only set when isolation actually provisioned a worktree above).
   // The restore flow re-enters this exact worktree (cwd = worktreePath) so a

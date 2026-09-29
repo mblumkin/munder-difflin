@@ -54,10 +54,16 @@ export interface ControlEvent {
   targets: string[];
   reason: string;
   at: string;
+  /** Agents whose hook actually took this event's note (AEON-1784). A queued
+   *  steer lives only in the process that queued it, so "issued" is not
+   *  "received": an app killed between the two leaves a RESUME on disk that no
+   *  session ever saw. Seat restore replays it to anyone not listed here. */
+  delivered?: string[];
 }
 export interface ControlStore {
   read(): ControlEvent | null;
-  write(ev: ControlEvent): void;
+  /** `log: false` rewrites the state only (a delivery record, not a transition). */
+  write(ev: ControlEvent, opts?: { log?: boolean }): void;
 }
 
 /** control-state.json holds the latest event; control-events.jsonl logs every
@@ -69,13 +75,14 @@ export function fileControlStore(getRoot: () => string | null): ControlStore {
       if (!root) return null;
       try { return JSON.parse(readFileSync(join(root, 'control-state.json'), 'utf8')) as ControlEvent; } catch { return null; }
     },
-    write(ev) {
+    write(ev, opts) {
       const root = getRoot();
       if (!root) return;
       const p = join(root, 'control-state.json');
       const tmp = `${p}.tmp-${process.pid}`;
       writeFileSync(tmp, JSON.stringify(ev, null, 2), 'utf8');
       renameSync(tmp, p);
+      if (opts?.log === false) return;
       try { appendFileSync(join(root, 'control-events.jsonl'), JSON.stringify(ev) + '\n', 'utf8'); } catch { /* the state file is the authority */ }
     }
   };
@@ -83,6 +90,16 @@ export function fileControlStore(getRoot: () => string | null): ControlStore {
 
 function controlHeader(seq: number, kind: ControlEventKind): string {
   return `[CONTROL EVENT #${seq} · ${kind.toUpperCase()} · issued by the Munder Difflin app]`;
+}
+
+function resumeNote(seq: number, stop: ControlEvent | null): string {
+  return [
+    controlHeader(seq, 'resume'),
+    stop
+      ? `This supersedes STOP #${stop.seq} and every earlier CLOSING TIME instruction in this conversation.`
+      : 'This supersedes every earlier CLOSING TIME instruction in this conversation.',
+    'Resume normal operation and accept new work; do not continue the closing-time protocol. Your history and memory stay as they are.'
+  ].join(' ');
 }
 
 /** Subject markers. Deliberately forgiving (case, -/_/space) — agents write
@@ -121,7 +138,9 @@ export class ClosingTimeController {
      *  drain — the graceful interrupt. Optional so tests can omit it. */
     private control?: ControlRegistry,
     private store?: ControlStore
-  ) {}
+  ) {
+    control?.observeTakes((id, note) => this.noteTaken(id, note));
+  }
 
   /** The latest control event, or null when none was ever issued. */
   controlState(): ControlEvent | null {
@@ -152,18 +171,37 @@ export class ClosingTimeController {
   private issueResume(stop: ControlEvent | null, targets: string[], reason: string): ControlEvent | null {
     const ev = this.nextEvent('resume', targets, reason);
     if (!this.applyControlEvent(ev)) return null;
-    const note = [
-      controlHeader(ev.seq, 'resume'),
-      stop
-        ? `This supersedes STOP #${stop.seq} and every earlier CLOSING TIME instruction in this conversation.`
-        : 'This supersedes every earlier CLOSING TIME instruction in this conversation.',
-      'Resume normal operation and accept new work; do not continue the closing-time protocol. Your history and memory stay as they are.'
-    ].join(' ');
+    const note = resumeNote(ev.seq, stop);
     for (const id of targets) {
       this.control?.clearSteers(id);
       this.control?.steer(id, note);
     }
     return ev;
+  }
+
+  /** A hook took `note` for `id`: if it is the standing RESUME, record the
+   *  delivery on disk so a relaunch knows this session already has it. */
+  private noteTaken(id: string, note: string): void {
+    const cur = this.controlState();
+    if (cur?.kind !== 'resume' || !note.startsWith(controlHeader(cur.seq, 'resume'))) return;
+    if (cur.delivered?.includes(id)) return;
+    this.store?.write({ ...cur, delivered: [...(cur.delivered ?? []), id] }, { log: false });
+  }
+
+  /** A seat came back on a RESUMED transcript. If the standing state is a
+   *  RESUME this agent's hook never took, queue it now. This covers the app
+   *  being killed after issuing a RESUME but before any seat spawned (the note
+   *  died with that process), and an agent left out of the RESUME's targets
+   *  because it was archived at launch. A transcript that never held a STOP
+   *  gets one redundant RESUME, once. Returns whether a note was queued. */
+  onSeatRestored(id: string): boolean {
+    if (!this.store || this.active) return false;
+    const cur = this.controlState();
+    if (cur?.kind !== 'resume' || cur.delivered?.includes(id)) return false;
+    this.control?.clearSteers(id);
+    this.control?.steer(id, resumeNote(cur.seq, null));
+    console.log(`[control-event] #${cur.seq} resume replayed to ${id} on seat restore`);
+    return true;
   }
 
   /** At launch: a STOP still standing from an earlier app session is lifted.
