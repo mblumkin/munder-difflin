@@ -1,3 +1,3 @@
-- **An idle agent restored after a restart now gets its resume without waiting for new mail.**
-- **A wake nudge no longer types over something you are typing, or a path you just dropped.**
-- **A failed nudge is retried instead of being counted as sent.**
+- **One inbox message now wakes an agent once, not twice.**
+- **Memory summaries read their own session, never another agent's.**
+- **A sign-in or API failure during a summary is now named in the log.**
