@@ -6,6 +6,24 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.5.15] - 2026-09-30 (local-only, not a public release)
+
+### Fixed
+
+- One inbox message now wakes an agent once. In 0.5.14 the main-process watchdog and the
+  window's own queue could both type the same notice, which cost the agent an extra turn.
+  The two paths now share one record of what was typed, and a claim left behind by a window
+  that went away expires after 30 seconds so the watchdog can still wake the agent.
+- A memory summary reads its own hidden session's transcript. It used to read the newest
+  transcript in the project folder, which could be another live agent's, and write that
+  agent's words into the wrong memory.
+- When a hidden session fails with an API error (an expired login, for example), the summary
+  step records the error's class instead of reporting "no parseable JSON".
+
+### Notes
+
+- Still local-only: `publishedVersion` stays at 0.4.6.
+
 ## [0.5.14] - 2026-09-29 (local-only, not a public release)
 
 ### Fixed
