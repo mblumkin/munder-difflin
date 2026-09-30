@@ -54,3 +54,29 @@ test('a Claude agent gets a native sandbox that still allows its agent dir and t
   // No bypass of the sandbox anywhere in the injected args.
   assert.ok(!inj.args.some((a) => /dangerously/.test(a)));
 });
+
+// AEON-1820: a Codex worker's session started in its project (for one seat the reactor primary,
+// read-only to it), so every relative path it typed was judged there. It now starts in its agent
+// folder, and the project stays writable as an extra root. The recorded cwd is not rewritten.
+test('a Codex worker starts in its agent folder and keeps its project writable', async () => {
+  const home = tmpHome();
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'md-project-'));
+  const hive = new HiveManager(() => home);
+  const inj = await hive.ensureAgent({ id: 'pam-1', name: 'Pam', provider: 'codex', cwd: project }, {});
+  const agentDir = path.join(home, 'hive', 'agents', 'pam-1');
+  assert.equal(inj.cwd, agentDir);
+  assert.ok(fs.statSync(agentDir).isDirectory(), 'the start folder exists before the PTY spawns');
+  const added = inj.args.flatMap((a, i) => (a === '--add-dir' ? [inj.args[i + 1]] : []));
+  assert.ok(added.includes(project), `project is a writable root: ${JSON.stringify(added)}`);
+  assert.ok(added.includes(agentDir) && added.includes(path.join(home, 'hive')));
+  assert.equal(hive.registry().agents['pam-1'].cwd, project, 'the recorded cwd stays the project');
+});
+
+test('a Codex god and a Claude worker keep starting in their own cwd', async () => {
+  const home = tmpHome();
+  const hive = new HiveManager(() => home);
+  const god = await hive.ensureAgent({ id: 'god', name: 'Michael', provider: 'codex', cwd: home, isGod: true }, {});
+  assert.equal(god.cwd, undefined);
+  const jim = await hive.ensureAgent({ id: 'jim-1', name: 'Jim', provider: 'claude', cwd: home }, {});
+  assert.equal(jim.cwd, undefined);
+});
