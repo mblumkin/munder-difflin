@@ -180,6 +180,11 @@ export interface Registry {
 export interface SpawnInjection {
   args: string[];
   env: Record<string, string>;
+  /** Directory to start the PTY in when it differs from the agent's project cwd.
+   *  Set for a Codex worker (AEON-1820): its session starts in its own agent folder,
+   *  so relative paths and the command guard resolve there, and the project stays
+   *  writable through `--add-dir`. The recorded agent cwd is unchanged. */
+  cwd?: string;
   /** The hive-protocol seed to TYPE into the TUI after boot rather than pass on
    *  argv — set only for `seedDelivery:'type-into-tui'` providers (Crush), whose
    *  bare TUI rejects a positional seed. The renderer types it through the same
@@ -851,6 +856,7 @@ export class HiveManager {
       // configuration is never mutated. Both share the HIVE_SOCK wiring below.
       const preArgs: string[] = [];
       let degraded: string | undefined;
+      let ptyCwd: string | undefined;
       // Dispatch on the structured bridge descriptor (the foundation's `bridgeOf`
       // derives {kind:'hooks'} from the legacy `hookBridge` for agy/codex, and
       // returns the explicit {kind:'proxy'} for qwen). Two ways a hookless CLI
@@ -879,7 +885,10 @@ export class HiveManager {
               // folder (inbox/.done, memory.md, outbox) and the shared hive root
               // (research deliverables, the board for god) are added as extra
               // writable roots. Harmless outside auto mode.
-              for (const d of this.sandboxWritableDirs(meta, dir, root, opts.extraWritableDirs)) preArgs.push('--add-dir', d);
+              // AEON-1820: a worker starts in its agent folder; its project joins the writable roots.
+              const project = !meta.isGod && meta.cwd ? meta.cwd : '';
+              if (project) ptyCwd = dir;
+              for (const d of this.sandboxWritableDirs(meta, dir, root, [...(project ? [project] : []), ...(opts.extraWritableDirs ?? [])])) preArgs.push('--add-dir', d);
             }
             else if (desc.shim === 'pi') {
               // Pi (earendil-works) has a rich pi.on(event) lifecycle. We drop a
@@ -960,7 +969,7 @@ export class HiveManager {
       // type-into-tui (Crush): the bare TUI reads a positional as a Cobra subcommand
       // → `Unknown command`. So DROP the positional and hand the protocol back as
       // seedPrompt; the renderer types it into the TUI after boot (ondev-b).
-      const deg = degraded ? { degraded } : {};
+      const deg = { ...(degraded ? { degraded } : {}), ...(ptyCwd ? { cwd: ptyCwd } : {}) };
       if (preset.seedDelivery === 'type-into-tui') return { args: [...preArgs], env, seedPrompt: prompt, ...deg };
       // If a provider somehow exposes neither a flag nor a positional prompt, spawn bare.
       if (flag) return { args: [...preArgs, flag, prompt], env, ...deg };

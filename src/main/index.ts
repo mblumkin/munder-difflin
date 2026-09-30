@@ -2769,6 +2769,10 @@ async function spawnAgentCore(opts: AgentSpawnOptions, owner: Electron.WebConten
   // seedDelivery:'type-into-tui') rather than passed on argv. Surfaced in the spawn
   // result so the renderer types it through the per-pty write-chain. (ondev-b)
   let seedPrompt: string | undefined;
+  // AEON-1820: where the PTY starts, when the hive puts it somewhere other than the
+  // project (a Codex worker's agent folder). opts.cwd stays the project: it is what
+  // the renderer records, what isolation and resume key on, and what respawn passes back.
+  let ptyCwd: string | undefined;
   if (opts.hive && hive.enabled()) {
     try {
       const inj = await hive.ensureAgent(
@@ -2792,6 +2796,7 @@ async function spawnAgentCore(opts: AgentSpawnOptions, owner: Electron.WebConten
       );
       opts.args = [...(opts.args ?? []), ...inj.args];
       seedPrompt = inj.seedPrompt;
+      ptyCwd = inj.cwd;
       // A degraded spawn (proxy bridge never bound) is told to the user the same
       // way breaker escalations are: a native toast, gated on the notifications
       // setting. The hive already logged it and pushed hive:degraded to the floor.
@@ -3013,7 +3018,7 @@ async function spawnAgentCore(opts: AgentSpawnOptions, owner: Electron.WebConten
   if (provider === 'codex' && opts.hive?.id) {
     await enableCodexRemoteForSpawn(opts, opts.hive.id);
   }
-  const res = ptyManager.spawn(opts, owner);
+  const res = ptyManager.spawn(ptyCwd ? { ...opts, cwd: ptyCwd } : opts, owner);
   if (res.ok) analytics.track('agent_spawned', { provider });
   else analytics.track('agent_spawn_failed', { provider, reason: spawnFailReason(res.error) });
   syncKeepAwake(); // arm the power-save blocker while ≥1 agent PTY is alive (#18)
