@@ -61,28 +61,42 @@ export interface HiddenClaudeResult {
  * the same project dir (god's, /Users/mason/HarnessAgents) wrote there while a condense settled,
  * so the capture read the seat's prose instead of the condense reply.
  */
-export function extractLastAssistantText(cwd: string, sessionId: string): string | null {
+export function extractLastAssistantResult(cwd: string, sessionId: string): HiddenClaudeResult {
   try {
     const file = path.join(projectDir(cwd), `${sessionId}.jsonl`);
-    if (!existsSync(file)) return null;
+    if (!existsSync(file)) return { ok: false, error: 'no assistant response found in transcript' };
     const lines = readFileSync(file, 'utf8').split('\n');
     for (let i = lines.length - 1; i >= 0; i--) {
       const trimmed = lines[i].trim();
       if (!trimmed) continue;
-      let rec: { type?: unknown; message?: { content?: unknown[] } };
+      let rec: { type?: unknown; isApiErrorMessage?: unknown; error?: unknown; message?: { content?: unknown[] } };
       try { rec = JSON.parse(trimmed); } catch { continue; }
       if (rec.type !== 'assistant') continue;
+      if (rec.isApiErrorMessage === true) {
+        // The CLI writes refused API calls as assistant records. Their text is
+        // not a successful answer; report only the structured error class,
+        // never the raw message (which may include private server details).
+        const cls = typeof rec.error === 'string' && /^[a-z][a-z0-9_:-]{0,63}$/i.test(rec.error)
+          ? rec.error : 'unknown';
+        return { ok: false, error: `api-error:${cls}` };
+      }
       const content = rec.message?.content;
       if (!Array.isArray(content)) continue;
       for (let j = content.length - 1; j >= 0; j--) {
         const block = content[j] as { type?: unknown; text?: unknown };
         if (block.type === 'text' && typeof block.text === 'string' && block.text.trim()) {
-          return block.text.trim();
+          return { ok: true, text: block.text.trim() };
         }
       }
     }
-    return null;
-  } catch { return null; }
+    return { ok: false, error: 'no assistant response found in transcript' };
+  } catch { return { ok: false, error: 'no assistant response found in transcript' }; }
+}
+
+/** Keep the text-only helper for callers that only need a successful answer. */
+export function extractLastAssistantText(cwd: string, sessionId: string): string | null {
+  const result = extractLastAssistantResult(cwd, sessionId);
+  return result.ok ? result.text ?? null : null;
 }
 
 export function runHiddenClaude(prompt: string, opts: HiddenClaudeOptions): Promise<HiddenClaudeResult> {
@@ -166,10 +180,7 @@ export function runHiddenClaude(prompt: string, opts: HiddenClaudeOptions): Prom
     };
 
     const captureAndFinish = () => {
-      const text = extractLastAssistantText(opts.cwd, sessionId);
-      finish(text
-        ? { ok: true, text }
-        : { ok: false, error: 'no assistant response found in transcript' });
+      finish(extractLastAssistantResult(opts.cwd, sessionId));
     };
 
     const sendPrompt = () => {
