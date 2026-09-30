@@ -1,5 +1,6 @@
 import * as pty from 'node-pty';
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { resolveCommand, userShellPath } from './shellEnv';
 import { expandTilde } from './fs';
@@ -55,28 +56,16 @@ export interface HiddenClaudeResult {
 }
 
 /**
- * Extract the last assistant text block from the transcript JSONL written
- * at or after `spawnedAt`. Reuses projectDir() from transcript.ts.
+ * Extract the last assistant text block from THIS session's transcript, <projectDir>/<id>.jsonl.
+ * AEON-1848: it used to take the newest .jsonl in the directory, and a live seat whose cwd maps to
+ * the same project dir (god's, /Users/mason/HarnessAgents) wrote there while a condense settled,
+ * so the capture read the seat's prose instead of the condense reply.
  */
-function extractLastAssistantText(cwd: string, spawnedAt: number): string | null {
+export function extractLastAssistantText(cwd: string, sessionId: string): string | null {
   try {
-    const dir = projectDir(cwd);
-    if (!existsSync(dir)) return null;
-
-    const candidates: { f: string; mtime: number }[] = [];
-    for (const f of readdirSync(dir)) {
-      if (!f.endsWith('.jsonl')) continue;
-      try {
-        const mtime = statSync(path.join(dir, f)).mtimeMs;
-        // 5 s slack: include files that already existed at spawn but were
-        // updated by this session. Sort by mtime and take the newest.
-        if (mtime >= spawnedAt - 5000) candidates.push({ f, mtime });
-      } catch { /* file removed between readdir and stat — skip */ }
-    }
-    if (!candidates.length) return null;
-    candidates.sort((a, b) => b.mtime - a.mtime);
-
-    const lines = readFileSync(path.join(dir, candidates[0].f), 'utf8').split('\n');
+    const file = path.join(projectDir(cwd), `${sessionId}.jsonl`);
+    if (!existsSync(file)) return null;
+    const lines = readFileSync(file, 'utf8').split('\n');
     for (let i = lines.length - 1; i >= 0; i--) {
       const trimmed = lines[i].trim();
       if (!trimmed) continue;
@@ -112,7 +101,9 @@ export function runHiddenClaude(prompt: string, opts: HiddenClaudeOptions): Prom
     const disallowed = opts.disallowedTools ?? ['Edit', 'Write', 'NotebookEdit'];
     const addDirs = (opts.addDirs ?? []).filter((d) => d && existsSync(d));
 
+    const sessionId = randomUUID();
     const args: string[] = [
+      '--session-id', sessionId,
       '--model', opts.model,
       '--permission-mode', 'bypassPermissions',
       '--disallowedTools', ...disallowed,
@@ -123,7 +114,6 @@ export function runHiddenClaude(prompt: string, opts: HiddenClaudeOptions): Prom
     const idleMs = opts.idleMs ?? 3500;
     const timeoutMs = opts.timeoutMs ?? 180_000;
 
-    const spawnedAt = Date.now();
     // Windows: node-pty's CreateProcess can't exec the npm `.cmd`/extensionless
     // `claude` shim directly (ERROR_BAD_EXE_FORMAT, error 193) — route non-.exe
     // targets through cmd.exe. A real claude.exe (WinGet) launches directly. (#22)
@@ -176,7 +166,7 @@ export function runHiddenClaude(prompt: string, opts: HiddenClaudeOptions): Prom
     };
 
     const captureAndFinish = () => {
-      const text = extractLastAssistantText(opts.cwd, spawnedAt);
+      const text = extractLastAssistantText(opts.cwd, sessionId);
       finish(text
         ? { ok: true, text }
         : { ok: false, error: 'no assistant response found in transcript' });
