@@ -30,6 +30,7 @@ import { readFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import Database from 'better-sqlite3';
 import { readAgentUsage } from './transcript';
 import { normalizeModel } from './pricing';
 
@@ -126,6 +127,8 @@ export interface TelemetryCollectorOptions {
    *  cwd (the common case for hive workers) pulls in every other agent's and
    *  every past session's history too. */
   resolveSessionId?: (agentId: string) => string | undefined;
+  /** Only OpenCode sessions use the shared OpenCode database fallback. */
+  resolveProvider?: (agentId: string) => string | undefined;
 }
 
 export class TelemetryCollector {
@@ -136,6 +139,7 @@ export class TelemetryCollector {
   private readonly emit?: (channel: string, payload: unknown) => void;
   private readonly resolveCwd?: (agentId: string) => string | null;
   private readonly resolveSessionId?: (agentId: string) => string | undefined;
+  private readonly resolveProvider?: (agentId: string) => string | undefined;
 
   /** sessionId → running accumulation. */
   private readonly sessions = new Map<string, SessionAccum>();
@@ -155,6 +159,7 @@ export class TelemetryCollector {
     this.emit = opts.emit;
     this.resolveCwd = opts.resolveCwd;
     this.resolveSessionId = opts.resolveSessionId;
+    this.resolveProvider = opts.resolveProvider;
   }
 
   /** Bind the loopback OTLP listener. The handler is live the instant this
@@ -195,7 +200,7 @@ export class TelemetryCollector {
     // transcript to fall back TO, and its own file carries a real cost rather
     // than an estimate. Returns null for everyone else, so the Claude path is
     // reached unchanged.
-    return this.grokFallback(agentId) ?? this.transcriptFallback(agentId);
+    return this.opencodeFallback(agentId) ?? this.grokFallback(agentId) ?? this.transcriptFallback(agentId);
   }
 
   /** Push (additive, OTel-only). Fires the agent's fresh aggregate whenever new
@@ -454,6 +459,41 @@ export class TelemetryCollector {
       model: u.model ?? '',
       usd: u.estimatedCostUsd
     };
+  }
+
+  /** OpenCode stores cumulative, per-session totals in its own SQLite database.
+   *  Use the session ID learned from the plugin, never cwd: several hive agents
+   *  can share a cwd, while OpenCode's database is shared across all workers. */
+  private opencodeFallback(agentId: string): AgentUsageSample | null {
+    if (this.resolveProvider?.(agentId) !== 'opencode') return null;
+    const sessionId = this.resolveSessionId?.(agentId);
+    if (!sessionId || !/^ses_[a-zA-Z0-9]+$/.test(sessionId)) return null;
+    let db: Database.Database | undefined;
+    try {
+      const dataHome = process.env.XDG_DATA_HOME || join(homedir(), '.local', 'share');
+      db = new Database(join(dataHome, 'opencode', 'opencode.db'),
+        { readonly: true, fileMustExist: true });
+      const row = db.prepare(`SELECT time_updated, model, cost, tokens_input, tokens_output,
+        tokens_cache_read, tokens_cache_write FROM session WHERE id = ?`).get(sessionId) as {
+        time_updated: number; model: string; cost: number; tokens_input: number;
+        tokens_output: number; tokens_cache_read: number; tokens_cache_write: number;
+      } | undefined;
+      if (!row) return null;
+      const parsedModel = JSON.parse(row.model || '{}') as { id?: string; providerID?: string };
+      const model = parsedModel.id
+        ? `${parsedModel.providerID ?? ''}/${parsedModel.id}`.replace(/^\//, '') : '';
+      return {
+        agentId, sessionId, ts: row.time_updated,
+        input: row.tokens_input, output: row.tokens_output,
+        cacheRead: row.tokens_cache_read, cacheCreation: row.tokens_cache_write,
+        model: normalizeModel(model), usd: row.cost
+      };
+    } catch {
+      // OpenCode absent, database/schema in transition, or a partial row.
+      return null;
+    } finally {
+      try { db?.close(); } catch { /* best-effort read-only cleanup */ }
+    }
   }
 
   /**
