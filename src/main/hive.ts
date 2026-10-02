@@ -3819,13 +3819,17 @@ const ARGS = new Map();
 export const HiveBridge = async () => {
   return {
     event: async (input) => {
-      try { if (input && input.event && input.event.type === 'session.idle') post({ hook_event_name: 'Stop' }); } catch (e) {}
+      try {
+        const ev = input && input.event;
+        if (ev && ev.type === 'session.idle')
+          post({ hook_event_name: 'Stop', session_id: ev.properties && ev.properties.sessionID });
+      } catch (e) {}
     },
     'tool.execute.before': async (input, output) => {
       try {
         var args = output && output.args;
         if (input && input.callID != null && args !== undefined) { ARGS.set(input.callID, args); if (ARGS.size > 200) ARGS.delete(ARGS.keys().next().value); }
-        post({ hook_event_name: 'PreToolUse', tool_name: input && (input.tool || input.name), tool_input: args });
+        post({ hook_event_name: 'PreToolUse', session_id: input && input.sessionID, tool_name: input && (input.tool || input.name), tool_input: args });
       } catch (e) {}
     },
     'tool.execute.after': async (input, output) => {
@@ -3833,7 +3837,7 @@ export const HiveBridge = async () => {
         var id = input && input.callID;
         var a = id != null ? ARGS.get(id) : undefined;
         if (id != null) ARGS.delete(id);
-        post({ hook_event_name: 'PostToolUse', tool_name: input && (input.tool || input.name), tool_input: a !== undefined ? a : (input && input.args) });
+        post({ hook_event_name: 'PostToolUse', session_id: input && input.sessionID, tool_name: input && (input.tool || input.name), tool_input: a !== undefined ? a : (input && input.args) });
       } catch (e) {}
     }
   };
