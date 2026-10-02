@@ -1,3 +1,3 @@
-- **One inbox message now wakes an agent once, not twice.**
-- **Memory summaries read their own session, never another agent's.**
-- **A sign-in or API failure during a summary is now named in the log.**
+- **OpenCode workers now show their real tokens and cost in the fleet view.**
+- **An OpenCode worker already running picks this up after a respawn.**
+- **A Codex worker starts in its own agent folder and finds its own instructions.**

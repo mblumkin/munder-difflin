@@ -6,6 +6,22 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.5.16] - 2026-10-02 (local-only, not a public release)
+
+### Fixed
+
+- An OpenCode worker's tokens and cost now show in the fleet view. They read 0 before,
+  because the OpenCode bridge sent no session ID. The bridge now sends it, and usage is read
+  from OpenCode's own session database for that exact session, with OpenCode's own cost.
+  A worker already running picks this up after a respawn.
+- A Codex worker's session now starts in its own agent folder, so it finds its own
+  instructions. The project folder is still reachable, and the recorded working folder is
+  unchanged.
+
+### Notes
+
+- Still local-only: `publishedVersion` stays at 0.4.6.
+
 ## [0.5.15] - 2026-09-30 (local-only, not a public release)
 
 ### Fixed
