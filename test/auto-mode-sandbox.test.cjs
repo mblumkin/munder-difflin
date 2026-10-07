@@ -80,3 +80,43 @@ test('a Codex god and a Claude worker keep starting in their own cwd', async () 
   const jim = await hive.ensureAgent({ id: 'jim-1', name: 'Jim', provider: 'claude', cwd: home }, {});
   assert.equal(jim.cwd, undefined);
 });
+
+// AEON-2096: the start folder above is deliberate, but the metadata named only the project, so
+// a seat's registry and identity.md read as a mismatch with its live pwd. Both now record the
+// start folder next to the project. The seat's tracked guide (agents/<id>/AGENTS.md) is also
+// provisioned into its private CODEX_HOME, and a guide removed from the seat leaves no stale copy.
+test('a Codex worker records where its session starts and carries its seat guide', async () => {
+  const home = tmpHome();
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'md-project-'));
+  const hive = new HiveManager(() => home);
+  const agentDir = path.join(home, 'hive', 'agents', 'pam-1');
+  fs.mkdirSync(agentDir, { recursive: true });
+  const guide = '# Pam\n\nKeep task artifacts under aeonNNNN/.\n';
+  fs.writeFileSync(path.join(agentDir, 'AGENTS.md'), guide);
+  const inj = await hive.ensureAgent({ id: 'pam-1', name: 'Pam', provider: 'codex', cwd: project }, {});
+  assert.equal(inj.cwd, agentDir);
+  const rec = hive.registry().agents['pam-1'];
+  assert.equal(rec.cwd, project, 'the recorded cwd stays the project');
+  assert.equal(rec.startDir, inj.cwd, 'the registry names the folder the session starts in');
+  const identity = fs.readFileSync(path.join(agentDir, 'identity.md'), 'utf8');
+  assert.ok(identity.includes(`- Project: ${project}`), identity);
+  assert.ok(identity.includes(`- Session starts in: ${agentDir}`), identity);
+  assert.ok(!identity.includes('- Working directory:'), 'no single label that only half applies');
+  assert.equal(fs.readFileSync(path.join(inj.env.CODEX_HOME, 'AGENTS.md'), 'utf8'), guide);
+
+  fs.unlinkSync(path.join(agentDir, 'AGENTS.md'));
+  const again = await hive.ensureAgent({ id: 'pam-1', name: 'Pam', provider: 'codex', cwd: project }, {});
+  assert.ok(!fs.existsSync(path.join(again.env.CODEX_HOME, 'AGENTS.md')), 'a removed seat guide leaves no stale copy');
+});
+
+test('agents that start in their own cwd record no separate start folder', async () => {
+  const home = tmpHome();
+  const hive = new HiveManager(() => home);
+  await hive.ensureAgent({ id: 'god', name: 'Michael', provider: 'codex', cwd: home, isGod: true }, {});
+  await hive.ensureAgent({ id: 'jim-1', name: 'Jim', provider: 'claude', cwd: home }, {});
+  for (const id of ['god', 'jim-1']) {
+    assert.equal(hive.registry().agents[id].startDir, undefined, id);
+    const identity = fs.readFileSync(path.join(home, 'hive', 'agents', id, 'identity.md'), 'utf8');
+    assert.ok(identity.includes(`- Working directory: ${home}`), identity);
+  }
+});

@@ -6,6 +6,34 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.5.17] - 2026-10-07 (local-only, not a public release)
+
+### Changed
+
+- Merged upstream main (120 commits since the last merge). The fork's own changes are all
+  kept. Among the upstream fixes that now ship here: the wake watchdog nudges a worker that
+  sat on its mail without taking a turn, and logs why it is holding one; an unbound hook
+  socket is loud and heals itself; mail to an archived agent is filed and the sender is told;
+  Shift+Enter in a terminal inserts a newline; https links in agent output are clickable.
+- The wake watchdog combines both sets of rules. A queued control event still wakes a seat,
+  a human's draft or open picker still holds the nudge, and a wake still counts only after
+  its text and Enter are written. Upstream's stall rule and hold reasons apply on top.
+- The model pickers add Sonnet 5.5 and GPT-6 Terra from upstream's catalog. The built-in
+  list and the downloadable list stay identical.
+
+### Fixed
+
+- A Codex worker's registry entry and identity.md now name both its project and the folder
+  its session starts in. Before, they named only the project, which read as a mismatch with
+  the live session.
+- A Codex worker's own guide (`agents/<id>/AGENTS.md` in the hive) is copied into its
+  private Codex home on every spawn, so Codex loads it as that worker's global
+  instructions. Removing the guide removes the copy.
+
+### Notes
+
+- Still local-only: `publishedVersion` stays at 0.4.6.
+
 ## [0.5.16] - 2026-10-02 (local-only, not a public release)
 
 ### Fixed
