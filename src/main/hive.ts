@@ -157,6 +157,9 @@ export interface AgentMeta {
   /** Michael's prep assistant — enriches prompts and forwards them to Michael.
    *  Send-only: excluded from broadcast fan-out so it never drains an inbox. */
   isAssistant?: boolean;
+  /** Where the session actually starts when that is not `cwd` (a Codex worker
+   *  starts in its agent folder, AEON-1820). Derived on every spawn. */
+  startDir?: string;
 }
 
 export interface RegistryAgent extends AgentMeta {
@@ -774,7 +777,8 @@ export class HiveManager {
     const prev = reg.agents[meta.id];
     if (meta.cwd) meta = { ...meta, cwd: expandTilde(meta.cwd) };
     const role = preferredAgentRole(meta.role, prev?.role, !!meta.isGod);
-    meta = { ...meta, role };
+    // Set explicitly (undefined included) so a seat that changed provider drops a stale value.
+    meta = { ...meta, role, startDir: this.codexStartDir(meta, dir) };
 
     const identity = join(dir, 'identity.md');
     writeFileSync(identity, this.identityText(meta), 'utf8'); // refresh on each spawn
@@ -924,7 +928,7 @@ export class HiveManager {
               // writable roots. Harmless outside auto mode.
               // AEON-1820: a worker starts in its agent folder; its project joins the writable roots.
               const project = !meta.isGod && meta.cwd ? meta.cwd : '';
-              if (project) ptyCwd = dir;
+              ptyCwd = meta.startDir;
               for (const d of this.sandboxWritableDirs(meta, dir, root, [...(project ? [project] : []), ...(opts.extraWritableDirs ?? [])])) preArgs.push('--add-dir', d);
             }
             else if (desc.shim === 'pi') {
@@ -1542,7 +1546,10 @@ export class HiveManager {
       '',
       `- Role: ${meta.role ?? (meta.isGod ? 'orchestrator (god)' : 'agent')}`,
       `- Capabilities: ${caps}`,
-      `- Working directory: ${meta.cwd}`,
+      ...(meta.startDir
+        ? [`- Project: ${meta.cwd}`,
+          `- Session starts in: ${meta.startDir} (relative paths resolve here; the project is an extra writable root)`]
+        : [`- Working directory: ${meta.cwd}`]),
       meta.isGod ? '- You are the **god / orchestrator**. You run the floor — keep awareness of the whole team, delegate execution, and personally own only the important calls (decomposition, sign-offs, conflicts, integration), not the grunt work.' : '',
       meta.isGod ? '- Monitor the team with `fleet.json` (live per-agent status/tokens/cost/breaker) and `registry.json`; full command reference in `COMMANDS.md`. `claude agents` does NOT list your hive siblings.' : '',
       ''
@@ -2288,6 +2295,14 @@ export class HiveManager {
    *  ~/.codex/auth.json is linked in and their config.toml is copied + extended
    *  (login + model/provider/trust settings still apply).
    *  Returns the CODEX_HOME path for the caller to put in the worker's env. */
+  /** The folder a Codex worker's session starts in, when it differs from its
+   *  recorded cwd: the same condition installCodexHooks' caller applies. */
+  private codexStartDir(meta: AgentMeta, dir: string): string | undefined {
+    const desc = bridgeOf(meta.provider);
+    const codex = !!desc && desc.kind === 'hooks' && desc.shim === 'codex' && !!this.sockPath();
+    return codex && !meta.isGod && meta.cwd ? dir : undefined;
+  }
+
   private installCodexHooks(dir: string, agentId: string): string {
     const home = join(dir, '.codex');
     try {
@@ -2360,6 +2375,13 @@ export class HiveManager {
       }
       config += codexGuardHooksToml(readClaudeGuards());
       writeFileSync(join(home, 'config.toml'), config, 'utf8');
+
+      // The seat's tracked guide becomes this home's global AGENTS.md, refreshed per
+      // spawn like identity.md; a guide removed from the seat must not linger here.
+      const guideSrc = join(dir, 'AGENTS.md');
+      const guideDest = join(home, 'AGENTS.md');
+      if (existsSync(guideSrc)) copyFileSync(guideSrc, guideDest);
+      else if (existsSync(guideDest)) unlinkSync(guideDest);
 
       // Keep each worker's CODEX_HOME isolated while putting its rollout data
       // below Codex's standard scan roots. External usage tools can then discover
