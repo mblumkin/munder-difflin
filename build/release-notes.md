@@ -1,3 +1,3 @@
-- **OpenCode workers now show their real tokens and cost in the fleet view.**
-- **An OpenCode worker already running picks this up after a respawn.**
-- **A Codex worker starts in its own agent folder and finds its own instructions.**
+- **Upstream fixes merged, with every fork change kept.**
+- **A worker that sits on its mail without starting is now woken, and the log says why one is held.**
+- **A Codex worker's records name where its session starts, and it carries its own guide.**
