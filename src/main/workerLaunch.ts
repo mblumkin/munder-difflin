@@ -31,13 +31,18 @@ export function buildWorkerLaunch(opts: {
   /** The app's auto (skip-permissions) setting. */
   autoMode: boolean;
 }): WorkerLaunch {
-  // A request that names a provider but no command means that provider's own CLI, never the
-  // app-wide default: the default (claude) then received the provider's flags and rejected them.
-  const namedProvider = normalizeAgentProvider(opts.requestProvider);
-  let command =
+  const requestCommand =
     typeof opts.requestCommand === 'string' && opts.requestCommand.trim()
       ? opts.requestCommand.trim()
-      : (namedProvider && defaultCommandForProvider(namedProvider)) || (opts.defaultCommand ?? 'claude');
+      : '';
+  const requestProvider = normalizeAgentProvider(opts.requestProvider);
+  const fallbackCommand = opts.defaultCommand ?? 'claude';
+  // An explicit command may be a wrapper or shim and remains authoritative.
+  // Without one, keep the executable and provider behavior coherent by taking
+  // the provider's canonical command before the configured legacy fallback.
+  let command =
+    requestCommand ||
+    (requestProvider ? defaultCommandForProvider(requestProvider, fallbackCommand) : fallbackCommand);
   // Inherit the app's auto (skip-permissions) mode when the request takes no
   // stance of its own: a headless worker has no human to click through tool
   // prompts, so without the flag it stalls at the first ask until the idle
@@ -47,7 +52,7 @@ export function buildWorkerLaunch(opts: {
   // non-claude worker stalling; review caught it). An explicit stance in the
   // request still wins: the flag's leading token already present as a TOKEN
   // (not substring — copilot's flag starts with `-s`) means the request chose.
-  const provider = inferAgentProvider(command, opts.requestProvider);
+  const provider = inferAgentProvider(command, requestProvider);
   const autoFlag = opts.autoMode ? autoModeFlagForProvider(provider) : '';
   if (autoFlag && !hasAutoModeStance(tokenizeCommand(command), provider)) {
     command += ` ${autoFlag}`;

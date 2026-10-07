@@ -33,6 +33,7 @@ const SHIPPED = {
     ["claude-opus-5", "Opus 5 · 1M"],
     ["claude-opus-4-8", "Opus 4.8"],
     ["claude-opus-4-8[1m]", "Opus 4.8 · 1M"],
+    ["claude-sonnet-5-5", "Sonnet 5.5"],
     ["claude-sonnet-5", "Sonnet 5"],
     ["claude-sonnet-4-6", "Sonnet 4.6"],
     ["claude-sonnet-4-6[1m]", "Sonnet 4.6 · 1M"],

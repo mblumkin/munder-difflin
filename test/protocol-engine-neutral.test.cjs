@@ -45,5 +45,6 @@ test('every Claude-only command in PROTOCOL.md is qualified where it appears', (
 });
 
 test('COMMANDS.md states it covers Claude Code only', () => {
-  assert.match(commands.split('\n').slice(0, 4).join('\n'), /applies ONLY to an agent running on Claude Code/);
+  // The generated-file notice (upstream) sits above the title; the claim is the doc's first paragraph.
+  assert.match(commands.replace(/^<!--[^\n]*-->\n\n/, '').split('\n').slice(0, 4).join('\n'), /applies ONLY to an agent running on Claude Code/);
 });
