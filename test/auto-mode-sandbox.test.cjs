@@ -102,11 +102,47 @@ test('a Codex worker records where its session starts and carries its seat guide
   assert.ok(identity.includes(`- Project: ${project}`), identity);
   assert.ok(identity.includes(`- Session starts in: ${agentDir}`), identity);
   assert.ok(!identity.includes('- Working directory:'), 'no single label that only half applies');
-  assert.equal(fs.readFileSync(path.join(inj.env.CODEX_HOME, 'AGENTS.md'), 'utf8'), guide);
+  assert.equal(guideCopies(inj, guide), 1, 'the session reads its seat guide exactly once');
 
   fs.unlinkSync(path.join(agentDir, 'AGENTS.md'));
   const again = await hive.ensureAgent({ id: 'pam-1', name: 'Pam', provider: 'codex', cwd: project }, {});
   assert.ok(!fs.existsSync(path.join(again.env.CODEX_HOME, 'AGENTS.md')), 'a removed seat guide leaves no stale copy');
+});
+
+// Codex joins its instructions from CODEX_HOME/AGENTS.md and then every AGENTS.md from the git root (or the
+// start folder alone, outside a repo) down to the start folder. A seat that starts in agents/<id>/ already
+// finds its guide on that path, so a CODEX_HOME copy made it read the guide twice (seen on a live 0.5.17
+// seat: two copies joined by "--- project-doc ---"). Counts the copies Codex would join for this spawn.
+function guideCopies(inj, guide, startDir) {
+  const start = startDir || inj.cwd;
+  let top = start;
+  for (let d = start; ; d = path.dirname(d)) {
+    if (fs.existsSync(path.join(d, '.git'))) { top = d; break; }
+    if (path.dirname(d) === d) break;
+  }
+  const chain = [];
+  for (let d = start; ; d = path.dirname(d)) { chain.push(d); if (d === top || path.dirname(d) === d) break; }
+  const read = (f) => (fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : null);
+  return [path.join(inj.env.CODEX_HOME, 'AGENTS.md'), ...chain.map((d) => path.join(d, 'AGENTS.md'))]
+    .filter((f) => read(f) === guide).length;
+}
+
+test('a Codex seat in the hive repo reads its guide once; a Codex god starting in its project still gets it', async () => {
+  const home = tmpHome();
+  fs.mkdirSync(path.join(home, 'hive', '.git'), { recursive: true });
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'md-project-'));
+  const hive = new HiveManager(() => home);
+  const guide = '# Seat guide\n';
+  for (const id of ['pam-1', 'god']) {
+    const d = path.join(home, 'hive', 'agents', id);
+    fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(path.join(d, 'AGENTS.md'), guide);
+  }
+  const pam = await hive.ensureAgent({ id: 'pam-1', name: 'Pam', provider: 'codex', cwd: project }, {});
+  assert.equal(guideCopies(pam, guide), 1, 'a seat starting in agents/<id>/ reads its guide once');
+  const god = await hive.ensureAgent({ id: 'god', name: 'Michael', provider: 'codex', cwd: project, isGod: true }, {});
+  assert.equal(god.cwd, undefined, 'the god starts in its project');
+  assert.equal(guideCopies(god, guide, project), 1, 'a seat whose start folder cannot find its guide keeps the CODEX_HOME copy');
 });
 
 test('agents that start in their own cwd record no separate start folder', async () => {

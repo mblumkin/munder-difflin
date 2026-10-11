@@ -913,7 +913,7 @@ export class HiveManager {
           if (desc.kind === 'hooks') {
             if (desc.shim === 'agy') this.installAgyHooks();
             else if (desc.shim === 'codex') {
-              env.CODEX_HOME = this.installCodexHooks(dir, meta.id);
+              env.CODEX_HOME = this.installCodexHooks(dir, meta.id, this.codexStartDir(meta, dir) === dir);
               // Codex refuses to run hooks from a config dir without persisted
               // "hook trust" (normally an interactive gate). Our hooks.json is
               // hive-authored inside an isolated CODEX_HOME, so we bypass that gate
@@ -2303,7 +2303,7 @@ export class HiveManager {
     return codex && !meta.isGod && meta.cwd ? dir : undefined;
   }
 
-  private installCodexHooks(dir: string, agentId: string): string {
+  private installCodexHooks(dir: string, agentId: string, startsInDir = false): string {
     const home = join(dir, '.codex');
     try {
       mkdirSync(home, { recursive: true });
@@ -2378,9 +2378,12 @@ export class HiveManager {
 
       // The seat's tracked guide becomes this home's global AGENTS.md, refreshed per
       // spawn like identity.md; a guide removed from the seat must not linger here.
+      // A session that starts in `dir` already reads dir/AGENTS.md as a project doc
+      // (Codex walks from the git root down to its start folder), so a copy here made
+      // it read the guide twice (AEON-2096); only a seat starting elsewhere needs it.
       const guideSrc = join(dir, 'AGENTS.md');
       const guideDest = join(home, 'AGENTS.md');
-      if (existsSync(guideSrc)) copyFileSync(guideSrc, guideDest);
+      if (existsSync(guideSrc) && !startsInDir) copyFileSync(guideSrc, guideDest);
       else if (existsSync(guideDest)) unlinkSync(guideDest);
 
       // Keep each worker's CODEX_HOME isolated while putting its rollout data
