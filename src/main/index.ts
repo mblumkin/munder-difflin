@@ -11,7 +11,7 @@ import { homedir } from 'node:os';
 import { request as httpsRequest } from 'node:https';
 import { PtyManager, type SpawnOptions } from './pty';
 import { shouldReapIdleWorker } from './workerHold';
-import { forceRemainingDescendants, releaseWorkerQueueTickets, signalDescendants, workerQueueOwners } from './workerProcesses';
+import { forceRemainingDescendants, releaseWorkerQueueTickets, signalDescendants, workerQueueOwners, workerTicketName } from './workerProcesses';
 import { removeWorkerScratchIfSafe } from './workerScratch';
 import { resolveCommand as resolveCliCommand, isSafeCommandName } from './shellEnv';
 import { initAutoUpdater, abortPendingRestart } from './updater';
@@ -4946,7 +4946,9 @@ async function gcPreservedWorktrees(): Promise<void> {
 function reapWorkerPty(workerId: string, spawnedAt: number): boolean {
   const reapedAt = Date.now();
   const root = hive.root();
-  const ticketOwners = workerQueueOwners(root, workerId, spawnedAt);
+  const displayName = liveWorkers.get(workerId)?.name ?? workerId;
+  const ticketName = workerTicketName(workerId, displayName, hive.registry().agents);
+  const ticketOwners = workerQueueOwners(root, workerId, spawnedAt, undefined, ticketName);
   const stopped = ptyManager.kill(workerId, true);
   if (!stopped.ok) {
     console.error(`[worker] cannot safely reap ${workerId}: ${stopped.error}`);
@@ -4954,7 +4956,8 @@ function reapWorkerPty(workerId: string, spawnedAt: number): boolean {
   }
   signalDescendants(ticketOwners);
   const forceTimer = setTimeout(() => forceRemainingDescendants(ticketOwners), 4_000);
-  const ticketTimer = setTimeout(() => releaseWorkerQueueTickets(root, workerId, reapedAt), 5_000);
+  const ownerPids = new Set(ticketOwners.map(owner => owner.pid));
+  const ticketTimer = setTimeout(() => releaseWorkerQueueTickets(root, workerId, reapedAt, ticketName, ownerPids), 5_000);
   forceTimer.unref?.();
   ticketTimer.unref?.();
   teardownPty(workerId);

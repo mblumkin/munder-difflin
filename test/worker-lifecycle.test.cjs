@@ -45,6 +45,33 @@ test('reap releases only the old worker queue ticket', () => {
   }
 });
 
+test('custom worker name finds its ticket and releases only its captured owner', () => {
+  const { releaseWorkerQueueTickets, workerQueueOwners, workerTicketName } = loadTs('src/main/workerProcesses.ts');
+  assert.equal(workerTicketName('worker-pam', 'Pam', { 'worker-pam': { name: 'Pam' } }), 'Pam');
+  assert.equal(workerTicketName('worker-pam', 'Pam', {
+    'worker-pam': { name: 'Pam' }, 'worker-other': { name: 'Pam' }
+  }), 'worker-pam');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aeon2423-queue-'));
+  const dir = path.join(root, 'locks', 'gate-queue');
+  fs.mkdirSync(dir, { recursive: true });
+  const now = Date.parse('2026-10-20T05:00:00Z');
+  const ticket = (name, pid, at) => fs.writeFileSync(path.join(dir, name), `pid=${pid}\nagent=Pam\nat=${at}\n`);
+  try {
+    ticket('mine.ticket', 99999999, '2026-10-20T04:59:00Z');
+    ticket('same-name-other.ticket', 88888888, '2026-10-20T04:59:00Z');
+    ticket('new.ticket', 99999999, '2026-10-20T05:01:00Z');
+    const rows = [{ pid: 99999999, ppid: 1, started: 'snapshot', command: 'bash browser-run.sh' }];
+    const owners = workerQueueOwners(root, 'worker-pam', now - 2 * 60_000, rows, 'Pam');
+    assert.deepEqual(owners.map(row => row.pid), [99999999]);
+    assert.equal(releaseWorkerQueueTickets(root, 'worker-pam', now, 'Pam', new Set(owners.map(row => row.pid))), 1);
+    assert.equal(fs.existsSync(path.join(dir, 'mine.ticket')), false);
+    assert.equal(fs.existsSync(path.join(dir, 'same-name-other.ticket')), true);
+    assert.equal(fs.existsSync(path.join(dir, 'new.ticket')), true);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('captured children are terminated leaf first without touching unrelated processes', () => {
   const { descendantsOf, signalDescendants } = loadTs('src/main/workerProcesses.ts');
   const rows = [
