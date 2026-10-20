@@ -6,6 +6,24 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.5.18] - 2026-10-20 (local-only, not a public release)
+
+### Fixed
+
+- The 20-minute idle reaper no longer stops a worker that is waiting for the browser lock or a
+  gate. A long wait writes no terminal output, so the reaper used to read it as idle; it now
+  checks for a live lock-waiting launcher under the worker, and holds off when it finds one or
+  cannot read the process list.
+- When a worker is stopped, everything it started is stopped too, including children that run in
+  their own process group, and its leftover test-queue entries are removed. Before, a stopped
+  worker's test runner could keep its place at the head of the queue and block everyone else.
+- Cleaning up a retired worker's scratch folder keeps any file that is committed to the hive, so
+  its cited evidence is no longer deleted.
+
+### Notes
+
+- Still local-only: `publishedVersion` stays at 0.4.6.
+
 ## [0.5.17] - 2026-10-07 (local-only, not a public release)
 
 ### Changed
