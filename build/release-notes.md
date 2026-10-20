@@ -1,3 +1,3 @@
-- **Upstream fixes merged, with every fork change kept.**
-- **A worker that sits on its mail without starting is now woken, and the log says why one is held.**
-- **A Codex worker's records name where its session starts, and it carries its own guide.**
+- **A worker waiting its turn for the browser is no longer stopped as idle.**
+- **Stopping a worker now stops everything it started and frees its place in the test queue.**
+- **A retired worker's committed files are kept when its folder is cleaned up.**
