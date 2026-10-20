@@ -1762,8 +1762,9 @@ export class HiveManager {
       // work order, so excluding them here only made a broadcast invisible to an
       // agent that direct mail reaches fine. See selectBroadcastTargets.
       ? selectBroadcastTargets(reg.agents, msg.from)
-      // Never deliver to self — guards a god → "human" message looping back to god.
-      : [resolveTo(msg.to)].filter((t) => t !== msg.from);
+      // An alias that resolves to the sender (god → "human") must not loop back to god. A message
+      // addressed to the sender's own id is deliberate (the stall pager runs as god and pages god).
+      : [resolveTo(msg.to)].filter((t) => t !== msg.from || msg.to === msg.from);
     // Targets that actually took delivery. The log below reports these instead of
     // intent, so a bounced or dropped message can never read as delivered.
     const delivered: string[] = [];
