@@ -4,6 +4,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { delimiter, join, win32 } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { ensureKilled, hardKillTree } from './procKill';
+import { descendantsOf, forceRemainingDescendants, isQueueWait, processSnapshot, signalDescendants } from './workerProcesses';
 import { expandTilde } from './fs';
 import { buildPtyEnv } from './ptyEnv';
 import {
@@ -771,13 +772,31 @@ export class PtyManager {
     }
   }
 
-  kill(id: string): { ok: boolean; error?: string } {
+  /** A queue wait is one long tool call with no PTY output. Unknown ancestry
+   *  must never be mistaken for proof that the worker is idle. */
+  queueWaitState(id: string): 'waiting' | 'other' | 'unknown' {
+    const pid = this.sessions.get(id)?.proc.pid;
+    if (!pid) return 'unknown';
+    const rows = processSnapshot();
+    if (!rows) return 'unknown';
+    return isQueueWait(descendantsOf(rows, pid)) ? 'waiting' : 'other';
+  }
+
+  kill(id: string, stopChildren = false): { ok: boolean; error?: string } {
     const s = this.sessions.get(id);
     if (!s) return { ok: false, error: `no pty: ${id}` };
     try {
       const pid = s.proc.pid;
+      const snapshot = stopChildren ? processSnapshot() : null;
+      if (stopChildren && !snapshot) return { ok: false, error: 'cannot inspect worker process tree' };
+      const children = snapshot ? descendantsOf(snapshot, pid) : [];
+      if (stopChildren) signalDescendants(children);
       s.proc.kill();
       ensureKilled(pid); // verify + sweep the process group so no PID leaks
+      if (stopChildren && children.length) {
+        const timer = setTimeout(() => forceRemainingDescendants(children), 4_000);
+        timer.unref?.();
+      }
       this.sessions.delete(id);
       return { ok: true };
     } catch (e) {

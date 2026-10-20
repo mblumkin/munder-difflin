@@ -11,6 +11,8 @@ import { homedir } from 'node:os';
 import { request as httpsRequest } from 'node:https';
 import { PtyManager, type SpawnOptions } from './pty';
 import { shouldReapIdleWorker } from './workerHold';
+import { forceRemainingDescendants, releaseWorkerQueueTickets, signalDescendants, workerQueueOwners } from './workerProcesses';
+import { removeWorkerScratchIfSafe } from './workerScratch';
 import { resolveCommand as resolveCliCommand, isSafeCommandName } from './shellEnv';
 import { initAutoUpdater, abortPendingRestart } from './updater';
 import { RealtimeFloorWatcher } from './realtimeFloorWatcher';
@@ -581,13 +583,12 @@ function workerScratchDir(workerId: string): string | null {
  *  still-live worker — so a crafted/mismatched id can't escape the agents root. */
 function removeWorkerScratch(workerId: string): void {
   if (liveWorkers.has(workerId)) return; // never wipe a live worker's mailbox
-  const dir = workerScratchDir(workerId);
   const root = hive.root();
-  if (!dir || !root) return;
-  const agentsRoot = join(root, 'agents');
-  // Path-safety: the resolved dir must sit directly under agents/ with basename == id.
-  if (resolve(dir) !== join(resolve(agentsRoot), basename(dir)) || basename(dir) !== workerId) return;
-  try { rmSync(dir, { recursive: true, force: true }); }
+  if (!root) return;
+  try {
+    const result = removeWorkerScratchIfSafe(root, workerId);
+    if (result !== 'removed') console.log(`[worker] keeping ${workerId} scratch: ${result}`);
+  }
   catch (e) { console.error('[worker] removeWorkerScratch failed:', e); }
 }
 // A natural PTY exit must run the same teardown as an explicit kill — EXCEPT when
@@ -4939,6 +4940,27 @@ async function gcPreservedWorktrees(): Promise<void> {
   }
 }
 
+/** Capture and stop a worker's live tool descendants before node-pty reparents
+ *  them. Queue tickets are removed after the termination grace, before the next
+ *  queue poll, and only when written before this worker's reap. */
+function reapWorkerPty(workerId: string, spawnedAt: number): boolean {
+  const reapedAt = Date.now();
+  const root = hive.root();
+  const ticketOwners = workerQueueOwners(root, workerId, spawnedAt);
+  const stopped = ptyManager.kill(workerId, true);
+  if (!stopped.ok) {
+    console.error(`[worker] cannot safely reap ${workerId}: ${stopped.error}`);
+    return false;
+  }
+  signalDescendants(ticketOwners);
+  const forceTimer = setTimeout(() => forceRemainingDescendants(ticketOwners), 4_000);
+  const ticketTimer = setTimeout(() => releaseWorkerQueueTickets(root, workerId, reapedAt), 5_000);
+  forceTimer.unref?.();
+  ticketTimer.unref?.();
+  teardownPty(workerId);
+  return true;
+}
+
 /** One controller tick: (1) finish/reap live workers (frees slots), then (2) pull
  *  new requests up to the concurrency cap. Order matters so a freed slot is reused
  *  the same tick. */
@@ -5010,6 +5032,7 @@ async function ephemeralWorkerTick(): Promise<void> {
       if (tokenCap > 0) {
         const used = workerTokensUsed(workerId);
         if (used > tokenCap) {
+          if (!reapWorkerPty(workerId, rec.spawnedAt)) continue;
           rec.releasing = true;
           console.warn(`[worker] reaping ${workerId} — token cap (${used.toLocaleString()} > ${tokenCap.toLocaleString()})`);
           informGod(
@@ -5017,14 +5040,18 @@ async function ephemeralWorkerTick(): Promise<void> {
             `Worker ${workerId} used ${used.toLocaleString()} tokens (> its cap of ${tokenCap.toLocaleString()}) and was reaped. Any committed work on its branch is preserved for you.`,
             rec.slack
           );
-          ptyManager.kill(workerId);
-          teardownPty(workerId);
           continue;
         }
       }
       const idleMs = ptyManager.idleFor(workerId);
       if (idleMs === undefined) continue; // PTY already gone; teardownPty cleans up
       if (shouldReapIdleWorker(hive.root(), workerId, rec.spawnedAt, idleMs, idleTimeoutMs)) {
+        const waitState = ptyManager.queueWaitState(workerId);
+        if (waitState !== 'other') {
+          if (waitState === 'unknown') console.warn(`[worker] idle reap deferred for ${workerId}: process ancestry unavailable`);
+          continue;
+        }
+        if (!reapWorkerPty(workerId, rec.spawnedAt)) continue;
         rec.releasing = true;
         console.warn(`[worker] reaping idle ${workerId} (${Math.round(idleMs / 60000)}min idle)`);
         informGod(
@@ -5032,8 +5059,6 @@ async function ephemeralWorkerTick(): Promise<void> {
           `Worker ${workerId} produced no output for ${Math.round(idleMs / 60000)} min (> the ${Math.round(idleTimeoutMs / 60000)} min cap) and never signaled done, so it was reaped. Any committed work on its branch is preserved for you.`,
           rec.slack
         );
-        ptyManager.kill(workerId);
-        teardownPty(workerId);
       }
     }
 
