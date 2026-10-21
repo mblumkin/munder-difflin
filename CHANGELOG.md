@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.5.19] - 2026-10-21 (local-only, not a public release)
+
 ### Fixed
 
 - Worker cleanup now recognizes browser queue tickets written under a custom worker name and
@@ -27,6 +29,13 @@ All notable changes to this project are documented here. The format is based on
   done. Its instructions used to forbid pushing at all, which contradicted the hive's own rule
   that finished work sits on a pushed branch, and a worker could end with its work unpushed
   (AEON-2476).
+- A worker that reports done stays reachable for three minutes before it is closed, so a
+  follow-up god sends right after the report reaches it instead of bouncing. A message from god in
+  that window keeps the worker on until it reports done again (AEON-2494).
+
+### Notes
+
+- Still local-only: `publishedVersion` stays at 0.4.6.
 
 ## [0.5.18] - 2026-10-20 (local-only, not a public release)
 

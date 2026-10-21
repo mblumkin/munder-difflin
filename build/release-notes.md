@@ -1,3 +1,3 @@
-- **A worker waiting its turn for the browser is no longer stopped as idle.**
-- **Stopping a worker now stops everything it started and frees its place in the test queue.**
-- **A retired worker's committed files are kept when its folder is cleaned up.**
+- **An inbox nudge to a Codex seat now always submits, so the seat no longer idles with unread mail.**
+- **A worker waiting on its own command is no longer stopped as idle, and a reap names any unpushed branch.**
+- **Messages an agent sends to itself, such as the stall pager's pages to god, are now delivered.**
