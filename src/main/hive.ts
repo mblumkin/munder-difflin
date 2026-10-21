@@ -1949,7 +1949,8 @@ export class HiveManager {
       // `join(file, '.gitignore')` with ENOTDIR into the best-effort catch. Harmless (nothing
       // escapes) but pure noise; the outbox check already filters strays out for free.
       ensureMineIgnore(join(agentsDir, id));
-      for (const f of readdirSync(outbox)) {
+      // Name order is send order (agents name outbox files by timestamp); readdir order is the filesystem's (AEON-2512).
+      for (const f of readdirSync(outbox).sort()) {
         if (!f.endsWith('.json')) continue;
         const full = join(outbox, f);
         try {
