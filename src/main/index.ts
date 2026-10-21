@@ -11,7 +11,7 @@ import { homedir } from 'node:os';
 import { request as httpsRequest } from 'node:https';
 import { PtyManager, type SpawnOptions } from './pty';
 import { shouldReapIdleWorker } from './workerHold';
-import { forceRemainingDescendants, releaseWorkerQueueTickets, signalDescendants, workerQueueOwners } from './workerProcesses';
+import { describeUnpushed, forceRemainingDescendants, releaseWorkerQueueTickets, signalDescendants, unpushedWorkerBranches, workerQueueOwners, workerTicketName } from './workerProcesses';
 import { removeWorkerScratchIfSafe } from './workerScratch';
 import { resolveCommand as resolveCliCommand, isSafeCommandName } from './shellEnv';
 import { initAutoUpdater, abortPendingRestart } from './updater';
@@ -65,10 +65,11 @@ import { IntegrationBroker } from './integrationBroker';
 import * as integrations from './integrations';
 import { validateBaseUrl, buildAuthHeaders, resolveUpstreamUrl, secretRefFor, INTEGRATION_TEMPLATES } from '../shared/integrations';
 import { RosterStore } from './roster';
-import { buildWorkerLaunch } from './workerLaunch';
+import { buildWorkerLaunch, WORKER_COMPLETION_NOTE } from './workerLaunch';
 import { ControlRegistry } from './control';
 import { CONTROL_EVENT_PENDING_NUDGE, WorkerWakeWatchdog, WORKER_WAKE_REPORT_MS, activityEvidenceAt, type WorkerWakeFacts } from './workerWake';
 import { inboxNudgeText } from '../shared/hiveNudge';
+import { PTY_SUBMIT_ENTER_DELAY_MS, ptySubmitPayload } from '../shared/ptySubmit';
 import { resolveGodName } from '../shared/godIdentity';
 import { fetchHireManifest, readHireManifestFiles } from './hire';
 import { parseHireDeepLink, type HireManifest } from '../shared/hire';
@@ -4712,6 +4713,32 @@ function archiveRequest(filePath: string, sub: '.done' | '.failed'): void {
  *  own timestamp), falling back to the file's mtime when `created_at` is missing
  *  or unparseable. When neither yields a usable timestamp we DON'T count it
  *  (fail toward keeping the worker alive — the idle reaper is the backstop). */
+/** How long a worker that sent act:done stays reachable before it is released. God often answers a report with a
+ *  follow-up; released at once, the worker was archived and the follow-up bounced (AEON-2494, three times one night). */
+const WORKER_DONE_GRACE_MS = 3 * 60_000;
+
+/** Did god write to this worker after its done signal? Such a message re-engages it: the done is spent, and the
+ *  worker's next act:done starts a new grace window. Scans the inbox and inbox/.done, the same way workerDoneAt reads
+ *  the outbox. */
+function workerFollowUpAfter(workerId: string, doneAt: number): boolean {
+  const root = hive.root();
+  if (!root) return false;
+  const base = join(root, 'agents', workerId, 'inbox');
+  for (const dir of [base, join(base, '.done')]) {
+    if (!existsSync(dir)) continue;
+    let files: string[];
+    try { files = readdirSync(dir); } catch { continue; }
+    for (const f of files) {
+      if (!f.endsWith('.json')) continue;
+      try {
+        const msg = JSON.parse(readFileSync(join(dir, f), 'utf8')) as { from?: string; created_at?: string };
+        if (msg.from === 'god' && Date.parse(msg.created_at ?? '') > doneAt) return true;
+      } catch { /* skip unreadable/partial */ }
+    }
+  }
+  return false;
+}
+
 function workerDoneAt(workerId: string, spawnedAt: number): number | null {
   const root = hive.root();
   if (!root) return null;
@@ -4872,7 +4899,7 @@ async function processSpawnRequest(filePath: string): Promise<void> {
     const prefix = slack
       ? buildAutonomousRequestProtocol(slack.channel, slack.thread_ts, slackReplyScriptPath())
       : '[AUTONOMOUS WORKER TASK — no interactive human is watching. Work autonomously; do not ask interactive questions.] The task starts now: ';
-    const suffix = `\n\n[CAPABILITIES] Before you start, consult your capability catalog — run the \`/capabilities\` skill (or read \`$AGENT_DIR/.claude/skills/capabilities/SKILL.md\`). It lists your temporal date-range skills (\`/today\`, \`/last30Days\`, \`/lastQuarter\`, …) and the integrations available to you (reached via the loopback broker) and how to call each. For any time-scoped work, resolve the dates with those skills instead of computing them by hand.\n\n[WORKER COMPLETION] When finished, signal done by sending ONE outbox message to god with "act":"done" and a short result summary — that releases this ephemeral worker (terminal closed; your branch is handed to god). Do NOT push to any remote; god is the sole integrator.`;
+    const suffix = `\n\n[CAPABILITIES] Before you start, consult your capability catalog — run the \`/capabilities\` skill (or read \`$AGENT_DIR/.claude/skills/capabilities/SKILL.md\`). It lists your temporal date-range skills (\`/today\`, \`/last30Days\`, \`/lastQuarter\`, …) and the integrations available to you (reached via the loopback broker) and how to call each. For any time-scoped work, resolve the dates with those skills instead of computing them by hand.\n\n${WORKER_COMPLETION_NOTE}`;
     hive.send({ to: workerId, conversation: `worker-${reqId}`, act: 'request', subject: meta.name, body: `${prefix}${objective}${suffix}` }, 'god');
   } catch (e) {
     console.error('[worker] dispatch send failed:', e);
@@ -4940,13 +4967,20 @@ async function gcPreservedWorktrees(): Promise<void> {
   }
 }
 
+/** Where a worker's worktrees live: `<harnessHome>/worktrees/<workerId>`, the same root isolated spawns use. */
+function workerWorktreesRoot(): string {
+  return join(readConfig().harnessHome ?? dirname(hive.root() ?? ''), 'worktrees');
+}
+
 /** Capture and stop a worker's live tool descendants before node-pty reparents
  *  them. Queue tickets are removed after the termination grace, before the next
  *  queue poll, and only when written before this worker's reap. */
 function reapWorkerPty(workerId: string, spawnedAt: number): boolean {
   const reapedAt = Date.now();
   const root = hive.root();
-  const ticketOwners = workerQueueOwners(root, workerId, spawnedAt);
+  const displayName = liveWorkers.get(workerId)?.name ?? workerId;
+  const ticketName = workerTicketName(workerId, displayName, hive.registry().agents);
+  const ticketOwners = workerQueueOwners(root, workerId, spawnedAt, undefined, ticketName);
   const stopped = ptyManager.kill(workerId, true);
   if (!stopped.ok) {
     console.error(`[worker] cannot safely reap ${workerId}: ${stopped.error}`);
@@ -4954,7 +4988,8 @@ function reapWorkerPty(workerId: string, spawnedAt: number): boolean {
   }
   signalDescendants(ticketOwners);
   const forceTimer = setTimeout(() => forceRemainingDescendants(ticketOwners), 4_000);
-  const ticketTimer = setTimeout(() => releaseWorkerQueueTickets(root, workerId, reapedAt), 5_000);
+  const ownerPids = new Set(ticketOwners.map(owner => owner.pid));
+  const ticketTimer = setTimeout(() => releaseWorkerQueueTickets(root, workerId, reapedAt, ticketName, ownerPids), 5_000);
   forceTimer.unref?.();
   ticketTimer.unref?.();
   teardownPty(workerId);
@@ -4987,8 +5022,10 @@ async function ephemeralWorkerTick(): Promise<void> {
     for (const [workerId, rec] of [...liveWorkers]) {
       if (rec.releasing) continue;
       const doneAt = workerDoneAt(workerId, rec.spawnedAt);
-      if (doneAt !== null) {
-        // Success: the worker already replied in-thread; just release it.
+      const reengaged = doneAt !== null && workerFollowUpAfter(workerId, doneAt);
+      if (doneAt !== null && !reengaged && Date.now() - doneAt < WORKER_DONE_GRACE_MS) continue;   // still reachable
+      if (doneAt !== null && !reengaged) {
+        // Success: the worker already replied in-thread and nobody wrote back in the grace window; release it.
         rec.releasing = true;
         console.log(`[worker] ${workerId} signaled done — releasing`);
         // Its mailbox is finished with too. Workers seldom file their own work
@@ -5037,7 +5074,7 @@ async function ephemeralWorkerTick(): Promise<void> {
           console.warn(`[worker] reaping ${workerId} — token cap (${used.toLocaleString()} > ${tokenCap.toLocaleString()})`);
           informGod(
             `[worker reaped — token cap] ${workerId}`,
-            `Worker ${workerId} used ${used.toLocaleString()} tokens (> its cap of ${tokenCap.toLocaleString()}) and was reaped. Any committed work on its branch is preserved for you.`,
+            `Worker ${workerId} used ${used.toLocaleString()} tokens (> its cap of ${tokenCap.toLocaleString()}) and was reaped. Any committed work on its branch is preserved for you. ${describeUnpushed(unpushedWorkerBranches(workerWorktreesRoot(), workerId))}`,
             rec.slack
           );
           continue;
@@ -5056,7 +5093,7 @@ async function ephemeralWorkerTick(): Promise<void> {
         console.warn(`[worker] reaping idle ${workerId} (${Math.round(idleMs / 60000)}min idle)`);
         informGod(
           `[worker reaped — idle] ${workerId}`,
-          `Worker ${workerId} produced no output for ${Math.round(idleMs / 60000)} min (> the ${Math.round(idleTimeoutMs / 60000)} min cap) and never signaled done, so it was reaped. Any committed work on its branch is preserved for you.`,
+          `Worker ${workerId} produced no output for ${Math.round(idleMs / 60000)} min (> the ${Math.round(idleTimeoutMs / 60000)} min cap) and never signaled done, so it was reaped. Any committed work on its branch is preserved for you. ${describeUnpushed(unpushedWorkerBranches(workerWorktreesRoot(), workerId))}`,
           rec.slack
         );
       }
@@ -5264,10 +5301,10 @@ let hookHealthTimer: ReturnType<typeof setInterval> | null = null;
 /** Type a guarded nudge into one worker's PTY — text first, Enter a
  *  tick later (the exact submitToPty pattern: a single-chunk write would land the
  *  "\r" inside the input box and never submit). Best-effort + never throws. */
-function nudgeWorker(ptyId: string, ids: string[] = [], notice?: string, onSubmitted?: () => void): void {
+function nudgeWorker(ptyId: string, provider: AgentProvider | undefined, ids: string[] = [], notice?: string, onSubmitted?: () => void): void {
   // Same text the renderer queues (#187's inboxNudgeText), so either path names
   // the message ids and the agent can distinguish filed mail from an empty wake.
-  const wrote = ptyManager.write(ptyId, notice ?? inboxNudgeText(ids));
+  const wrote = ptyManager.write(ptyId, ptySubmitPayload(notice ?? inboxNudgeText(ids), provider));
   if (!wrote.ok) { console.warn(`[worker-wake] write failed for ${ptyId}: ${wrote.error}`); return; }
   setTimeout(() => {
     try {
@@ -5275,7 +5312,7 @@ function nudgeWorker(ptyId: string, ids: string[] = [], notice?: string, onSubmi
       if (!submitted.ok) console.warn(`[worker-wake] submit failed for ${ptyId}: ${submitted.error}`);
       else onSubmitted?.();
     } catch (e) { console.error('[worker-wake] submit threw:', e); }
-  }, 140);
+  }, PTY_SUBMIT_ENTER_DELAY_MS);
 }
 
 /** Main-process inbox-wake beat (issue #151, fix A): the renderer's fast idle
@@ -5340,7 +5377,7 @@ function runWorkerWakeBeat(): void {
     const resumeSeq = closingTime.pendingLaunchResumeSeq(agentId);
     if (resumeSeq !== null) {
       console.log(`[worker-wake] nudging ${agentId} on ${ptyId} for pending control event`);
-      nudgeWorker(ptyId, [], CONTROL_EVENT_PENDING_NUDGE, () => {
+      nudgeWorker(ptyId, reg.agents[agentId]?.provider, [], CONTROL_EVENT_PENDING_NUDGE, () => {
         if (ptyForAgent(agentId) === ptyId) workerWake.submitted(agentId, [], resumeSeq);
       });
       continue;
@@ -5351,7 +5388,7 @@ function runWorkerWakeBeat(): void {
     const ids = hive.inbox(agentId).map((m) => m.id).filter(Boolean);
     if (!ids.length) { console.log(`[worker-wake] ${agentId} drained before delivery, skipping`); continue; }
     console.log(`[worker-wake] nudging ${agentId} on ${ptyId} (${ids.length} pending)`);
-    nudgeWorker(ptyId, ids, undefined, () => {
+    nudgeWorker(ptyId, reg.agents[agentId]?.provider, ids, undefined, () => {
       if (ptyForAgent(agentId) === ptyId) workerWake.submitted(agentId, ids);
     });
   }

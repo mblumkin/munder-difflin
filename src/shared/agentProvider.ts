@@ -134,6 +134,10 @@ export interface AgentProviderPreset {
    *  (through the SAME per-pty write-chain as the inbox-wake nudge, so they can't
    *  collide). Absent/undefined = today's flag-or-positional behavior. (ondev-b) */
   seedDelivery?: 'type-into-tui';
+  /** Typed prompts always go in as a bracketed paste, one line or many (see src/shared/ptySubmit.ts). Codex turns
+   *  an Enter within 120 ms of a raw character burst into a newline, so a raw nudge can sit typed but unsent. Not a
+   *  default: agy treats the markers as literal input. (AEON-2468) */
+  bracketedSubmit?: boolean;
   /** This CLI accepts the initial hive prompt as a trailing positional argument.
    *  Codex/Grok/Pi do; Kimi/custom do not, so they must spawn bare when no prompt
    *  flag exists instead of receiving an invalid positional argument. */
@@ -228,6 +232,7 @@ export const AGENT_PROVIDER_PRESETS: AgentProviderPreset[] = [
     // (see hive.installCodexHooks). Stop→drain works natively (Codex's Stop honors
     // {decision:'block',reason} = continue-with-prompt, exactly like Claude).
     hookBridge: 'codex',
+    bracketedSubmit: true,
     // Inbox drains via the codex-hook bridge's Stop→drain (the renderer's idle
     // inbox-wake nudge remains as a harmless fallback for an idle worker).
     canReceiveInbox: true,

@@ -6,6 +6,37 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.5.19] - 2026-10-21 (local-only, not a public release)
+
+### Fixed
+
+- Worker cleanup now recognizes browser queue tickets written under a custom worker name and
+  removes only tickets whose owner it captured before stopping that worker.
+- A message an agent sends to its own id now reaches its inbox. The router dropped every one, so
+  the hive's stall pager, which runs as god and pages god, had never delivered a single page.
+  Mail god addresses to "human" still does not loop back to god.
+- An inbox nudge typed into a Codex seat now always submits. Codex treats a fast run of typed
+  characters as a paste and turns an Enter that follows within about 120 ms into a new line, so
+  on a busy machine the nudge could sit in the prompt unsent and the seat idled with unread mail.
+  Codex prompts now go in as a bracketed paste, which Codex never holds Enter back for (AEON-2468).
+- The idle reaper no longer stops a worker that is waiting on a command it started, such as a
+  long commit or test run in the background. Such a wait writes nothing to the terminal, so the
+  worker looked idle and was stopped with its report unsent; any command still running under the
+  worker now counts as work, as a browser-lock wait already did (AEON-2473).
+- When a worker is reaped, god's notice now lists every branch in the worker's worktrees that is
+  not pushed, so committed work is not stranded unnoticed (AEON-2473).
+- A hired worker is now told to push its feature branch (never main or a tag) before it reports
+  done. Its instructions used to forbid pushing at all, which contradicted the hive's own rule
+  that finished work sits on a pushed branch, and a worker could end with its work unpushed
+  (AEON-2476).
+- A worker that reports done stays reachable for three minutes before it is closed, so a
+  follow-up god sends right after the report reaches it instead of bouncing. A message from god in
+  that window keeps the worker on until it reports done again (AEON-2494).
+
+### Notes
+
+- Still local-only: `publishedVersion` stays at 0.4.6.
+
 ## [0.5.18] - 2026-10-20 (local-only, not a public release)
 
 ### Fixed

@@ -19,6 +19,7 @@ import type { AgentProvider } from '../../../shared/agentProvider';
 import { bridgeOf, providerPreset } from '../../../shared/agentProvider';
 import { isDurableRole, preferredAgentRole, roleForHiveSpawn } from '../../../shared/agentRole';
 import { inboxNudgeText, isInboxNudge } from '../../../shared/hiveNudge';
+import { PTY_SUBMIT_ENTER_DELAY_MS, ptySubmitPayload } from '../../../shared/ptySubmit';
 import { resolveGodName } from '../../../shared/godIdentity';
 import { acquireTerminal, resetTerminal, isTerminalAutomationSafe } from '@/components/terminalPool';
 import { canDeliverToAgent, deliverWithAcknowledgement, checkPrecondition } from './queueDelivery';
@@ -135,11 +136,11 @@ function submitToPty(
   const prev = writeChains.get(ptyId) ?? Promise.resolve();
   const next = prev.catch(() => { /* a failed prior write must not stall the chain */ }).then(async () => {
     await waitForTerminalReady(ptyId, provider);
-    // Bracketed paste (ESC[200~ … ESC[201~) only matters for MULTI-LINE text, so a
-    // stray "\n" doesn't submit early (#24). Single-line text (nudges, slash
-    // commands) is sent raw — some TUIs (Antigravity's agy) treat the paste
-    // markers as literal input and never submit, so skipping them is more robust.
-    const payload = text.includes('\n') ? `\x1b[200~${text}\x1b[201~` : text;
+    // Bracketed paste (ESC[200~ … ESC[201~) for MULTI-LINE text, so a stray "\n"
+    // doesn't submit early (#24). Single-line text is sent raw (agy treats the
+    // markers as literal input), except for a provider whose composer needs them
+    // to submit at all (Codex, AEON-2468): see ptySubmitPayload.
+    const payload = ptySubmitPayload(text, provider);
     // writePty NEVER rejects for a dead pty — it resolves { ok:false, error:
     // 'no pty: …' } — so an unchecked await here made every failed delivery look
     // successful (the queue-drain then destroyed the message it had already
@@ -147,7 +148,7 @@ function submitToPty(
     // immune (the prev.catch above absorbs it for the next writer).
     const wrote = await window.cth.writePty(ptyId, payload);
     if (!wrote?.ok) throw new Error(wrote?.error ?? `pty write failed: ${ptyId}`);
-    await new Promise((r) => setTimeout(r, 140));
+    await new Promise((r) => setTimeout(r, PTY_SUBMIT_ENTER_DELAY_MS));
     const submitted = await window.cth.writePty(ptyId, '\r');
     if (!submitted?.ok) throw new Error(submitted?.error ?? `pty write failed: ${ptyId}`);
     await new Promise((r) => setTimeout(r, settleMs));
