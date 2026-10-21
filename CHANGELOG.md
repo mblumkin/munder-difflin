@@ -10,6 +10,9 @@ All notable changes to this project are documented here. The format is based on
 
 - Worker cleanup now recognizes browser queue tickets written under a custom worker name and
   removes only tickets whose owner it captured before stopping that worker.
+- A message an agent sends to its own id now reaches its inbox. The router dropped every one, so
+  the hive's stall pager, which runs as god and pages god, had never delivered a single page.
+  Mail god addresses to "human" still does not loop back to god.
 
 ## [0.5.18] - 2026-10-20 (local-only, not a public release)
 
