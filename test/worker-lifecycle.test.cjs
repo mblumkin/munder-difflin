@@ -125,7 +125,7 @@ test('live worker tick respects spawn, hold and queue wait, then reaps descendan
     compilerOptions: { target: ts.ScriptTarget.ES2022 }
   }).outputText;
   const { shouldReapIdleWorker } = loadTs('src/main/workerHold.ts');
-  const { workerTicketName, workerQueueOwners, releaseWorkerQueueTickets } = loadTs('src/main/workerProcesses.ts');
+  const { workerTicketName, workerQueueOwners, releaseWorkerQueueTickets, describeUnpushed, unpushedWorkerBranches } = loadTs('src/main/workerProcesses.ts');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aeon2444-live-'));
   const workerId = 'worker-fixture';
   const now = Date.now();
@@ -171,6 +171,8 @@ test('live worker tick respects spawn, hold and queue wait, then reaps descendan
     setTimeout: (fn, ms) => { calls.timers.push([ms, fn]); return { unref() {} }; },
     teardownPty: id => calls.teardown.push(id),
     informGod: (...args) => calls.notices.push(args),
+    // AEON-2473: the reap notice lists unpushed branches; this worker has no worktrees.
+    describeUnpushed, unpushedWorkerBranches, workerWorktreesRoot: () => path.join(root, 'worktrees'),
   };
   const { ephemeralWorkerTick } = vm.runInNewContext(code, context, { filename: 'live-worker-controller.js' });
   const check = (name, condition) => {
@@ -198,6 +200,7 @@ test('live worker tick respects spawn, hold and queue wait, then reaps descendan
       && calls.teardown.length === 1 && calls.signal.includes(99999999) && worker.releasing);
     check('idle path schedules ticket release after descendant stop',
       calls.timers.some(([ms]) => ms === 5000) && calls.notices.length === 1);
+    check('the reap notice says whether any branch is unpushed', /Every branch in its worktrees is on its remote/.test(calls.notices[0][1]));
     calls.timers.find(([ms]) => ms === 5000)[1]();
     check('reap releases only captured old ticket', !fs.existsSync(path.join(ticketDir, 'old.ticket'))
       && fs.existsSync(path.join(ticketDir, 'new.ticket')) && fs.existsSync(path.join(ticketDir, 'other.ticket')));
