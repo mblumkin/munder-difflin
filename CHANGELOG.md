@@ -6,6 +6,23 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.5.20] - 2026-10-21 (local-only, not a public release)
+
+### Fixed
+
+- The idle reaper works again on a busy machine. It reads the full process list, which grew past
+  a 1 MB read limit once agents' long commands piled up, so the read failed: no idle worker was
+  ever stopped and a stop that needed the process tree refused to run.
+- Registering an agent and filing a worker's unread mail now commit only their own files to the
+  hive. Both used to stage everything in the hive folder, so on a busy hive a slow commit could
+  time out and leave other seats' work half staged. A git command that times out is now
+  recorded in the hive log with the command it was running (AEON-2495).
+
+### Notes
+
+- Supersedes 0.5.19, which was tagged but never installed: its reaper could not read the process
+  list on a busy machine. Still local-only: `publishedVersion` stays at 0.4.6.
+
 ## [0.5.19] - 2026-10-21 (local-only, not a public release)
 
 ### Fixed

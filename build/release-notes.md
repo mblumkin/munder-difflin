@@ -1,3 +1,3 @@
-- **Inbox nudges to a Codex seat now always submit.**
-- **A worker waiting on its own command is no longer stopped as idle.**
-- **A worker that reports done stays reachable for a follow-up.**
+- **The idle reaper works again on a busy machine.**
+- **Agent registration and inbox filing commit only their own files.**
+- **A git command that times out is now named in the hive log.**
