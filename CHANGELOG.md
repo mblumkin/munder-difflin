@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- The idle reaper works again on a busy machine. It reads the full process list, which grew past
+  a 1 MB read limit once agents' long commands piled up, so the read failed: no idle worker was
+  ever stopped and a stop that needed the process tree refused to run.
+
 ## [0.5.19] - 2026-10-21 (local-only, not a public release)
 
 ### Fixed
