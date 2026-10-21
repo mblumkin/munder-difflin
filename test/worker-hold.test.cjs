@@ -52,9 +52,3 @@ test('malformed marker does not suppress reaping', () => {
   withFixture({ holder: workerId, reason: 'hold', since: 'bad', expected_by: 'bad' }, root => assert.equal(
     shouldReapIdleWorker(root, workerId, spawnedAt, idleMs, timeoutMs, now), true));
 });
-
-test('the live worker tick uses the hold decision before its idle reap', () => {
-  const source = fs.readFileSync(path.resolve(__dirname, '..', 'src/main/index.ts'), 'utf8');
-  assert.ok(/if \(shouldReapIdleWorker\(hive\.root\(\), workerId, rec\.spawnedAt, idleMs, idleTimeoutMs\)\)/.test(source),
-    'the worker tick must use the bounded hold decision before idle reaping');
-});

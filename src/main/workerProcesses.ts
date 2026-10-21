@@ -67,11 +67,20 @@ export function forceRemainingDescendants(rows: WorkerProcess[]): void {
   }
 }
 
+/** A display-name ticket is usable only while no other registered agent shares it. */
+export function workerTicketName(
+  workerId: string, displayName: string,
+  agents: Record<string, { name: string }>
+): string {
+  return Object.entries(agents).some(([id, agent]) => id !== workerId && agent.name === displayName)
+    ? workerId : displayName;
+}
+
 /** A queued launcher can already have been detached from the PTY. Its ticket
  *  still names the worker and the live owner PID, so capture it before reap. */
 export function workerQueueOwners(
   hiveRoot: string | null, workerId: string, spawnedAt: number,
-  rows: WorkerProcess[] | null = processSnapshot()
+  rows: WorkerProcess[] | null = processSnapshot(), workerName = workerId
 ): WorkerProcess[] {
   if (!rows || !hiveRoot || !/^worker-[A-Za-z0-9._-]+$/.test(workerId)) return [];
   const dir = join(hiveRoot, 'locks', 'gate-queue');
@@ -84,7 +93,7 @@ export function workerQueueOwners(
       const path = join(dir, name);
       if (!lstatSync(path).isFile()) continue;
       const lines = readFileSync(path, 'utf8').split(/\r?\n/);
-      if (!lines.includes(`agent=${workerId}`)) continue;
+      if (!lines.includes(`agent=${workerId}`) && !lines.includes(`agent=${workerName}`)) continue;
       const at = lines.find(line => line.startsWith('at='));
       const pid = lines.find(line => /^pid=\d+$/.test(line));
       const writtenAt = at ? Date.parse(at.slice(3)) : NaN;
@@ -98,7 +107,10 @@ export function workerQueueOwners(
 
 /** Queue files name their owner; remove only this worker's tickets after its
  *  captured descendants have been stopped. A stale ticket otherwise holds FIFO. */
-export function releaseWorkerQueueTickets(hiveRoot: string | null, workerId: string, reapedAt: number): number {
+export function releaseWorkerQueueTickets(
+  hiveRoot: string | null, workerId: string, reapedAt: number,
+  workerName = workerId, capturedOwnerPids: ReadonlySet<number> = new Set()
+): number {
   if (!hiveRoot || !/^worker-[A-Za-z0-9._-]+$/.test(workerId)) return 0;
   const dir = join(hiveRoot, 'locks', 'gate-queue');
   if (!existsSync(dir)) return 0;
@@ -115,7 +127,10 @@ export function releaseWorkerQueueTickets(hiveRoot: string | null, workerId: str
       const writtenAt = at ? Date.parse(at.slice(3)) : NaN;
       const ownerPid = pidLine && /^pid=\d+$/.test(pidLine) ? Number(pidLine.slice(4)) : NaN;
       // A new incarnation can use the same worker id before this timer fires.
-      if (lines.includes(`agent=${workerId}`) && Number.isFinite(writtenAt) && writtenAt <= reapedAt
+      const byId = lines.includes(`agent=${workerId}`);
+      const byName = workerName !== workerId && lines.includes(`agent=${workerName}`)
+        && capturedOwnerPids.has(ownerPid);
+      if ((byId || byName) && Number.isFinite(writtenAt) && writtenAt <= reapedAt
           && Number.isSafeInteger(ownerPid) && ownerPid > 0) {
         try { process.kill(ownerPid, 0); continue; }
         catch (error) {

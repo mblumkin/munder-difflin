@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- Worker cleanup now recognizes browser queue tickets written under a custom worker name and
+  removes only tickets whose owner it captured before stopping that worker.
+
 ## [0.5.18] - 2026-10-20 (local-only, not a public release)
 
 ### Fixed
