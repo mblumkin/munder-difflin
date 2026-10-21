@@ -11,7 +11,7 @@ import { homedir } from 'node:os';
 import { request as httpsRequest } from 'node:https';
 import { PtyManager, type SpawnOptions } from './pty';
 import { shouldReapIdleWorker } from './workerHold';
-import { forceRemainingDescendants, releaseWorkerQueueTickets, signalDescendants, workerQueueOwners, workerTicketName } from './workerProcesses';
+import { describeUnpushed, forceRemainingDescendants, releaseWorkerQueueTickets, signalDescendants, unpushedWorkerBranches, workerQueueOwners, workerTicketName } from './workerProcesses';
 import { removeWorkerScratchIfSafe } from './workerScratch';
 import { resolveCommand as resolveCliCommand, isSafeCommandName } from './shellEnv';
 import { initAutoUpdater, abortPendingRestart } from './updater';
@@ -4941,6 +4941,11 @@ async function gcPreservedWorktrees(): Promise<void> {
   }
 }
 
+/** Where a worker's worktrees live: `<harnessHome>/worktrees/<workerId>`, the same root isolated spawns use. */
+function workerWorktreesRoot(): string {
+  return join(readConfig().harnessHome ?? dirname(hive.root() ?? ''), 'worktrees');
+}
+
 /** Capture and stop a worker's live tool descendants before node-pty reparents
  *  them. Queue tickets are removed after the termination grace, before the next
  *  queue poll, and only when written before this worker's reap. */
@@ -5041,7 +5046,7 @@ async function ephemeralWorkerTick(): Promise<void> {
           console.warn(`[worker] reaping ${workerId} — token cap (${used.toLocaleString()} > ${tokenCap.toLocaleString()})`);
           informGod(
             `[worker reaped — token cap] ${workerId}`,
-            `Worker ${workerId} used ${used.toLocaleString()} tokens (> its cap of ${tokenCap.toLocaleString()}) and was reaped. Any committed work on its branch is preserved for you.`,
+            `Worker ${workerId} used ${used.toLocaleString()} tokens (> its cap of ${tokenCap.toLocaleString()}) and was reaped. Any committed work on its branch is preserved for you. ${describeUnpushed(unpushedWorkerBranches(workerWorktreesRoot(), workerId))}`,
             rec.slack
           );
           continue;
@@ -5060,7 +5065,7 @@ async function ephemeralWorkerTick(): Promise<void> {
         console.warn(`[worker] reaping idle ${workerId} (${Math.round(idleMs / 60000)}min idle)`);
         informGod(
           `[worker reaped — idle] ${workerId}`,
-          `Worker ${workerId} produced no output for ${Math.round(idleMs / 60000)} min (> the ${Math.round(idleTimeoutMs / 60000)} min cap) and never signaled done, so it was reaped. Any committed work on its branch is preserved for you.`,
+          `Worker ${workerId} produced no output for ${Math.round(idleMs / 60000)} min (> the ${Math.round(idleTimeoutMs / 60000)} min cap) and never signaled done, so it was reaped. Any committed work on its branch is preserved for you. ${describeUnpushed(unpushedWorkerBranches(workerWorktreesRoot(), workerId))}`,
           rec.slack
         );
       }

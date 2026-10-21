@@ -17,6 +17,12 @@ All notable changes to this project are documented here. The format is based on
   characters as a paste and turns an Enter that follows within about 120 ms into a new line, so
   on a busy machine the nudge could sit in the prompt unsent and the seat idled with unread mail.
   Codex prompts now go in as a bracketed paste, which Codex never holds Enter back for (AEON-2468).
+- The idle reaper no longer stops a worker that is waiting on a command it started, such as a
+  long commit or test run in the background. Such a wait writes nothing to the terminal, so the
+  worker looked idle and was stopped with its report unsent; any command still running under the
+  worker now counts as work, as a browser-lock wait already did (AEON-2473).
+- When a worker is reaped, god's notice now lists every branch in the worker's worktrees that is
+  not pushed, so committed work is not stranded unnoticed (AEON-2473).
 
 ## [0.5.18] - 2026-10-20 (local-only, not a public release)
 
