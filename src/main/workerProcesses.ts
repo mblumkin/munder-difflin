@@ -12,7 +12,10 @@ export interface WorkerProcess {
 /** Read ancestry before killing the PTY; children can be reparented on exit. */
 export function processSnapshot(): WorkerProcess[] | null {
   if (process.platform === 'win32') return null;
-  const result = spawnSync('ps', ['-axww', '-o', 'pid=,ppid=,lstart=,command='], { timeout: 2_000 });
+  // PITFALL: spawnSync's default maxBuffer is 1 MB, and -axww prints every full command line (an agent's Bash tool
+  // command runs to 12 KB). Past 1 MB the call fails ENOBUFS, the snapshot is null, the idle reap defers forever and
+  // kill(id, true) refuses; this host measured 1,076,714 bytes.
+  const result = spawnSync('ps', ['-axww', '-o', 'pid=,ppid=,lstart=,command='], { timeout: 2_000, maxBuffer: 64 * 1024 * 1024 });
   if (result.error || result.status !== 0) return null;
   return parseProcessSnapshot(String(result.stdout));
 }
