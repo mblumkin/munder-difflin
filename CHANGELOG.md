@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- A finished worker's hive folder is now moved to `archived-agents/` instead of being deleted, so
+  a patch or note it delivered but god had not picked up yet is kept. God's notice names where it
+  went (AEON-2507).
+
 ## [0.5.20] - 2026-10-21 (local-only, not a public release)
 
 ### Fixed
