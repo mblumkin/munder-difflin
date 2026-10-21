@@ -48,6 +48,15 @@ export function isQueueWait(rows: WorkerProcess[]): boolean {
   return rows.some(row => /^(?:\S*\/(?:ba|z|)sh|bash|sh|zsh)\s+(?:\S*\/)?(?:browser-run|gate-launch)\.sh\s+.*--wait-for-lock(?:=\S+|\s|$)/.test(row.command));
 }
 
+/** A live command a tool started: Claude Code's Bash tool runs `zsh -c source <snapshot> && eval ...` and Codex runs
+ *  `bash -lc <cmd>`, so a shell with -c under the worker is work in flight, foreground or background (AEON-2473: a
+ *  worker waiting 20 min on its own background command was reaped with its report unsent). A queue wait is one case.
+ *  shortcut: a command that never exits (a dev server left running) keeps the worker forever, like a queue wait does;
+ *  add a ceiling if a worker ever holds a slot that way. */
+export function isToolCommand(rows: WorkerProcess[]): boolean {
+  return isQueueWait(rows) || rows.some(row => /^(?:\S*\/)?(?:ba|z|da|)sh\s+-l?c\s/.test(row.command));
+}
+
 export function signalDescendants(
   rows: WorkerProcess[], signal: (pid: number, signal: NodeJS.Signals) => void = process.kill
 ): void {

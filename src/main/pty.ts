@@ -4,7 +4,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { delimiter, join, win32 } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { ensureKilled, hardKillTree } from './procKill';
-import { descendantsOf, forceRemainingDescendants, isQueueWait, processSnapshot, signalDescendants } from './workerProcesses';
+import { descendantsOf, forceRemainingDescendants, isToolCommand, processSnapshot, signalDescendants } from './workerProcesses';
 import { expandTilde } from './fs';
 import { buildPtyEnv } from './ptyEnv';
 import {
@@ -772,14 +772,14 @@ export class PtyManager {
     }
   }
 
-  /** A queue wait is one long tool call with no PTY output. Unknown ancestry
+  /** A live tool command (a queue wait is one) is work with no PTY output: 'waiting'. Unknown ancestry
    *  must never be mistaken for proof that the worker is idle. */
   queueWaitState(id: string): 'waiting' | 'other' | 'unknown' {
     const pid = this.sessions.get(id)?.proc.pid;
     if (!pid) return 'unknown';
     const rows = processSnapshot();
     if (!rows) return 'unknown';
-    return isQueueWait(descendantsOf(rows, pid)) ? 'waiting' : 'other';
+    return isToolCommand(descendantsOf(rows, pid)) ? 'waiting' : 'other';
   }
 
   kill(id: string, stopChildren = false): { ok: boolean; error?: string } {
