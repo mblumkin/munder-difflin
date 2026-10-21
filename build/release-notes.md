@@ -1,3 +1,3 @@
-- **An inbox nudge to a Codex seat now always submits, so the seat no longer idles with unread mail.**
-- **A worker waiting on its own command is no longer stopped as idle, and a reap names any unpushed branch.**
-- **Messages an agent sends to itself, such as the stall pager's pages to god, are now delivered.**
+- **Inbox nudges to a Codex seat now always submit.**
+- **A worker waiting on its own command is no longer stopped as idle.**
+- **A worker that reports done stays reachable for a follow-up.**
