@@ -1,3 +1,3 @@
+- **A finished worker's folder is archived, so a patch it delivered is kept.**
 - **The idle reaper works again on a busy machine.**
 - **Agent registration and inbox filing commit only their own files.**
-- **A git command that times out is now named in the hive log.**

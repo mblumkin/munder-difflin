@@ -12,7 +12,7 @@ import { request as httpsRequest } from 'node:https';
 import { PtyManager, type SpawnOptions } from './pty';
 import { shouldReapIdleWorker } from './workerHold';
 import { describeUnpushed, forceRemainingDescendants, releaseWorkerQueueTickets, signalDescendants, unpushedWorkerBranches, workerQueueOwners, workerTicketName } from './workerProcesses';
-import { removeWorkerScratchIfSafe } from './workerScratch';
+import { archiveWorkerScratchIfSafe } from './workerScratch';
 import { resolveCommand as resolveCliCommand, isSafeCommandName } from './shellEnv';
 import { initAutoUpdater, abortPendingRestart } from './updater';
 import { RealtimeFloorWatcher } from './realtimeFloorWatcher';
@@ -579,18 +579,25 @@ function workerScratchDir(workerId: string): string | null {
   return root ? join(root, 'agents', workerId) : null;
 }
 
-/** Best-effort removal of a worker's scratch (hive agent) dir. Guarded to ONLY ever
- *  delete a path that resolves to exactly HIVE_ROOT/agents/<workerId> and never a
- *  still-live worker — so a crafted/mismatched id can't escape the agents root. */
-function removeWorkerScratch(workerId: string): void {
-  if (liveWorkers.has(workerId)) return; // never wipe a live worker's mailbox
+/** Best-effort archive of a worker's scratch (hive agent) dir: moved, never deleted (AEON-2507). Guarded to only
+ *  ever move a path that resolves to exactly HIVE_ROOT/agents/<workerId> and never a still-live worker, so a
+ *  crafted/mismatched id can't escape the agents root. Returns where it went, for god's notice. */
+function removeWorkerScratch(workerId: string): string | null {
+  if (liveWorkers.has(workerId)) return null; // never move a live worker's mailbox
   const root = hive.root();
-  if (!root) return;
+  if (!root) return null;
   try {
-    const result = removeWorkerScratchIfSafe(root, workerId);
-    if (result !== 'removed') console.log(`[worker] keeping ${workerId} scratch: ${result}`);
+    const out = archiveWorkerScratchIfSafe(root, workerId);
+    if (out.result !== 'archived') console.log(`[worker] keeping ${workerId} scratch: ${out.result}`);
+    return out.to ?? null;
   }
-  catch (e) { console.error('[worker] removeWorkerScratch failed:', e); }
+  catch (e) { console.error('[worker] removeWorkerScratch failed:', e); return null; }
+}
+
+/** One line for god naming where a worker's hive folder went. */
+function scratchArchiveNote(workerId: string, to: string | null): string {
+  return to ? `Its hive folder (inbox, outbox, wip, any patch it delivered) was moved to ${to}.`
+    : `Its hive folder agents/${workerId} was kept in place.`;
 }
 // A natural PTY exit must run the same teardown as an explicit kill — EXCEPT when
 // the PTY was the missing-CLI installer: a clean exit there means the engine CLI was
@@ -4939,9 +4946,10 @@ async function gcPreservedWorktrees(): Promise<void> {
       // (a) Worktree already gone (removed at clean teardown, or god removed it by
       //     hand per the preserve note) → just reclaim the scratch dir + drop tracking.
       if (!existsSync(e.wtPath)) {
-        removeWorkerScratch(e.workerId);
+        const to = removeWorkerScratch(e.workerId);
         preservedWorktrees.delete(key);
         console.log(`[worker gc] ${e.workerId}: worktree already gone — reclaimed scratch`);
+        if (to) informGod(`[worker scratch archived] ${e.workerId}`, scratchArchiveNote(e.workerId, to), e.slack);
         continue;
       }
       // (b) Still on disk → reclaim ONLY when provably integrated + clean.
@@ -4953,12 +4961,12 @@ async function gcPreservedWorktrees(): Promise<void> {
       if (!safe.gc) continue; // keep — fail-safe
       const r = await removeWorktree(e.origCwd, e.wtPath);
       if (!r.ok) { console.error(`[worker gc] removeWorktree failed (keeping ${e.workerId}):`, r.error); continue; }
-      removeWorkerScratch(e.workerId);
+      const to = removeWorkerScratch(e.workerId);
       preservedWorktrees.delete(key);
       console.log(`[worker gc] reclaimed ${e.workerId} (${safe.detail})`);
       informGod(
         `[worker worktree reclaimed] ${e.workerId}`,
-        `The preserved worktree for ${e.workerId} is now integrated (${safe.detail}), so it and its scratch dir were garbage-collected.\nWorktree: ${e.wtPath}`,
+        `The preserved worktree for ${e.workerId} is now integrated (${safe.detail}), so it was garbage-collected. ${scratchArchiveNote(e.workerId, to)}\nWorktree: ${e.wtPath}`,
         e.slack
       );
     }
