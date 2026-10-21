@@ -6,11 +6,18 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.5.21] - 2026-10-21 (local-only, not a public release)
+
 ### Fixed
 
 - A finished worker's hive folder is now moved to `archived-agents/` instead of being deleted, so
   a patch or note it delivered but god had not picked up yet is kept. God's notice names where it
   went (AEON-2507).
+
+### Notes
+
+- Supersedes 0.5.20, which was tagged but never installed; install this one build. Still
+  local-only: `publishedVersion` stays at 0.4.6.
 
 ## [0.5.20] - 2026-10-21 (local-only, not a public release)
 
