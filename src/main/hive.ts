@@ -855,6 +855,14 @@ export class HiveManager {
     // PowerShell, so every such instruction was dead on a Windows floor. Commands
     // we write for an agent to run bake `nodeCommand()`'s absolute path instead.
     env.HIVE_NODE = this.nodeCommand();
+    // AEON-2498: an agent's sandbox cannot write the shared repo config, and `git checkout -b X origin/Y`
+    // writes branch tracking there AFTER switching the index and tree, so the failure left HEAD on the old
+    // branch over the new tree. Git's environment config turns the tracking write off for every git call
+    // the agent makes; it appends after any entries the parent environment already carries.
+    const gitCfg = Number(process.env.GIT_CONFIG_COUNT) || 0;
+    env[`GIT_CONFIG_KEY_${gitCfg}`] = 'branch.autoSetupMerge';
+    env[`GIT_CONFIG_VALUE_${gitCfg}`] = 'false';
+    env.GIT_CONFIG_COUNT = String(gitCfg + 1);
     // Generic light/dark hint for TUIs that paint their own background. The app
     // defaults to light but every agent CLI assumed a dark terminal, so Crush and
     // OpenCode looked pasted into a light window. COLORFGBG is the classic
