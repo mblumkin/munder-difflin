@@ -393,6 +393,11 @@ function pruneCrashLogs(dir: string): void {
   } catch { /* unreadable directory is not worth failing an exit path over */ }
 }
 
+/** A git command for the log: the first few arguments, then a count, so a long pathspec stays one short line. */
+function gitCommandLine(args: string[]): string {
+  return args.length > 8 ? `${args.slice(0, 8).join(' ')} (+${args.length - 8} more)` : args.join(' ');
+}
+
 export class HiveManager {
   /**
    * @param getHome  Lazily resolve harnessHome so the hive follows config changes.
@@ -826,20 +831,12 @@ export class HiveManager {
     if (!cwd.valid) {
       this.appendLog({ kind: 'cwd_invalid', agentId: meta.id, cwd: meta.cwd, issue: cwd.issue });
     }
-    // AEON-1522: deliberately left on `-A` (no `paths` argument), not migrated with the other
-    // 6 call sites. This method also conditionally writes memory.md/cursor.json and copies an
-    // entire bundled-skills directory tree (copyBundledSkills, above) — enumerating that
-    // exactly is real, disproportionate risk (a missed path here silently never commits) for
-    // a call site that fires once per agent spawn, not the rapid-burst shape this card exists
-    // to fix. Round 2 (Dwight's review, 2026-09-14): after migrating the other 6, this `-A`
-    // and `hive: init`'s (ensureHive, once ever) are the only two left in the whole file —
-    // this is NOT a relied-upon general sweeper for anything the migrated sites might miss
-    // (each of those now gates its own commit on its own write-set — see `routeOnce`'s and
-    // `send()`'s own doc comments, round 3 same review), just this one method's own honest
-    // scope-out. Don't "finish the job"
-    // by narrowing this one too without first re-deriving that no other path has come to
-    // depend on it catching something.
-    this.commit(`hive: register ${meta.id}`);
+    // AEON-2495: scoped like every other commit. A bare `add -A` here staged the whole hive (594
+    // untracked files at the time), and a timed-out add left the shared index half staged.
+    // Everything this method writes is under the agent's own dir (identity, memory, cursor,
+    // the bundled-skills tree) plus registry.json; `git add -- <dir>` stages the dir's adds,
+    // edits and deletions alike, so nothing has to be enumerated file by file.
+    this.commit(`hive: register ${meta.id}`, [dir, join(root, 'registry.json')]);
 
     const env: Record<string, string> = {
       AGENT_ID: meta.id,
@@ -1152,7 +1149,9 @@ export class HiveManager {
     if (out.moved > 0) {
       try {
         this.appendLog({ kind: 'inbox-settled', agentId: id, count: out.moved });
-        this.commit(`hive: settle inbox of ${id} (${out.moved} unread)`);
+        // AEON-2495: scoped, never a bare add -A. Inbox files are ignored by every agent dir's .gitignore, so
+        // what this commit records is the inbox-settled line in log.jsonl, which doCommit always stages.
+        this.commit(`hive: settle inbox of ${id} (${out.moved} unread)`, []);
       } catch { /* best-effort */ }
     }
     return out;
@@ -3042,7 +3041,12 @@ export class HiveManager {
       }, this.gitTimeoutMs);
       timer.unref?.();
       proc.on('close', (code) => {
-        if (timedOut) { settle({ ok: false, out, err: err || 'git timed out' }); return; }
+        if (timedOut) {
+          // AEON-2495: a timeout used to leave no trace, so a half-staged index had no cause on record.
+          try { this.appendLog({ kind: 'git-timeout', message: `git timed out after ${this.gitTimeoutMs} ms: git ${gitCommandLine(args)}` }); } catch { /* best-effort */ }
+          settle({ ok: false, out, err: err || 'git timed out' });
+          return;
+        }
         settle({ ok: code === 0, out, err });
       });
       proc.on('error', (e) => settle({ ok: false, out: '', err: e.message }));
