@@ -4713,6 +4713,32 @@ function archiveRequest(filePath: string, sub: '.done' | '.failed'): void {
  *  own timestamp), falling back to the file's mtime when `created_at` is missing
  *  or unparseable. When neither yields a usable timestamp we DON'T count it
  *  (fail toward keeping the worker alive — the idle reaper is the backstop). */
+/** How long a worker that sent act:done stays reachable before it is released. God often answers a report with a
+ *  follow-up; released at once, the worker was archived and the follow-up bounced (AEON-2494, three times one night). */
+const WORKER_DONE_GRACE_MS = 3 * 60_000;
+
+/** Did god write to this worker after its done signal? Such a message re-engages it: the done is spent, and the
+ *  worker's next act:done starts a new grace window. Scans the inbox and inbox/.done, the same way workerDoneAt reads
+ *  the outbox. */
+function workerFollowUpAfter(workerId: string, doneAt: number): boolean {
+  const root = hive.root();
+  if (!root) return false;
+  const base = join(root, 'agents', workerId, 'inbox');
+  for (const dir of [base, join(base, '.done')]) {
+    if (!existsSync(dir)) continue;
+    let files: string[];
+    try { files = readdirSync(dir); } catch { continue; }
+    for (const f of files) {
+      if (!f.endsWith('.json')) continue;
+      try {
+        const msg = JSON.parse(readFileSync(join(dir, f), 'utf8')) as { from?: string; created_at?: string };
+        if (msg.from === 'god' && Date.parse(msg.created_at ?? '') > doneAt) return true;
+      } catch { /* skip unreadable/partial */ }
+    }
+  }
+  return false;
+}
+
 function workerDoneAt(workerId: string, spawnedAt: number): number | null {
   const root = hive.root();
   if (!root) return null;
@@ -4996,8 +5022,10 @@ async function ephemeralWorkerTick(): Promise<void> {
     for (const [workerId, rec] of [...liveWorkers]) {
       if (rec.releasing) continue;
       const doneAt = workerDoneAt(workerId, rec.spawnedAt);
-      if (doneAt !== null) {
-        // Success: the worker already replied in-thread; just release it.
+      const reengaged = doneAt !== null && workerFollowUpAfter(workerId, doneAt);
+      if (doneAt !== null && !reengaged && Date.now() - doneAt < WORKER_DONE_GRACE_MS) continue;   // still reachable
+      if (doneAt !== null && !reengaged) {
+        // Success: the worker already replied in-thread and nobody wrote back in the grace window; release it.
         rec.releasing = true;
         console.log(`[worker] ${workerId} signaled done — releasing`);
         // Its mailbox is finished with too. Workers seldom file their own work
