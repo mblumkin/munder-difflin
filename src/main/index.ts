@@ -69,6 +69,7 @@ import { buildWorkerLaunch } from './workerLaunch';
 import { ControlRegistry } from './control';
 import { CONTROL_EVENT_PENDING_NUDGE, WorkerWakeWatchdog, WORKER_WAKE_REPORT_MS, activityEvidenceAt, type WorkerWakeFacts } from './workerWake';
 import { inboxNudgeText } from '../shared/hiveNudge';
+import { PTY_SUBMIT_ENTER_DELAY_MS, ptySubmitPayload } from '../shared/ptySubmit';
 import { resolveGodName } from '../shared/godIdentity';
 import { fetchHireManifest, readHireManifestFiles } from './hire';
 import { parseHireDeepLink, type HireManifest } from '../shared/hire';
@@ -5267,10 +5268,10 @@ let hookHealthTimer: ReturnType<typeof setInterval> | null = null;
 /** Type a guarded nudge into one worker's PTY — text first, Enter a
  *  tick later (the exact submitToPty pattern: a single-chunk write would land the
  *  "\r" inside the input box and never submit). Best-effort + never throws. */
-function nudgeWorker(ptyId: string, ids: string[] = [], notice?: string, onSubmitted?: () => void): void {
+function nudgeWorker(ptyId: string, provider: AgentProvider | undefined, ids: string[] = [], notice?: string, onSubmitted?: () => void): void {
   // Same text the renderer queues (#187's inboxNudgeText), so either path names
   // the message ids and the agent can distinguish filed mail from an empty wake.
-  const wrote = ptyManager.write(ptyId, notice ?? inboxNudgeText(ids));
+  const wrote = ptyManager.write(ptyId, ptySubmitPayload(notice ?? inboxNudgeText(ids), provider));
   if (!wrote.ok) { console.warn(`[worker-wake] write failed for ${ptyId}: ${wrote.error}`); return; }
   setTimeout(() => {
     try {
@@ -5278,7 +5279,7 @@ function nudgeWorker(ptyId: string, ids: string[] = [], notice?: string, onSubmi
       if (!submitted.ok) console.warn(`[worker-wake] submit failed for ${ptyId}: ${submitted.error}`);
       else onSubmitted?.();
     } catch (e) { console.error('[worker-wake] submit threw:', e); }
-  }, 140);
+  }, PTY_SUBMIT_ENTER_DELAY_MS);
 }
 
 /** Main-process inbox-wake beat (issue #151, fix A): the renderer's fast idle
@@ -5343,7 +5344,7 @@ function runWorkerWakeBeat(): void {
     const resumeSeq = closingTime.pendingLaunchResumeSeq(agentId);
     if (resumeSeq !== null) {
       console.log(`[worker-wake] nudging ${agentId} on ${ptyId} for pending control event`);
-      nudgeWorker(ptyId, [], CONTROL_EVENT_PENDING_NUDGE, () => {
+      nudgeWorker(ptyId, reg.agents[agentId]?.provider, [], CONTROL_EVENT_PENDING_NUDGE, () => {
         if (ptyForAgent(agentId) === ptyId) workerWake.submitted(agentId, [], resumeSeq);
       });
       continue;
@@ -5354,7 +5355,7 @@ function runWorkerWakeBeat(): void {
     const ids = hive.inbox(agentId).map((m) => m.id).filter(Boolean);
     if (!ids.length) { console.log(`[worker-wake] ${agentId} drained before delivery, skipping`); continue; }
     console.log(`[worker-wake] nudging ${agentId} on ${ptyId} (${ids.length} pending)`);
-    nudgeWorker(ptyId, ids, undefined, () => {
+    nudgeWorker(ptyId, reg.agents[agentId]?.provider, ids, undefined, () => {
       if (ptyForAgent(agentId) === ptyId) workerWake.submitted(agentId, ids);
     });
   }

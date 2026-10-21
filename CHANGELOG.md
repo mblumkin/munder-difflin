@@ -13,6 +13,10 @@ All notable changes to this project are documented here. The format is based on
 - A message an agent sends to its own id now reaches its inbox. The router dropped every one, so
   the hive's stall pager, which runs as god and pages god, had never delivered a single page.
   Mail god addresses to "human" still does not loop back to god.
+- An inbox nudge typed into a Codex seat now always submits. Codex treats a fast run of typed
+  characters as a paste and turns an Enter that follows within about 120 ms into a new line, so
+  on a busy machine the nudge could sit in the prompt unsent and the seat idled with unread mail.
+  Codex prompts now go in as a bracketed paste, which Codex never holds Enter back for (AEON-2468).
 
 ## [0.5.18] - 2026-10-20 (local-only, not a public release)
 
