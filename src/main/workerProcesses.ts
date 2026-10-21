@@ -137,3 +137,57 @@ export function releaseWorkerQueueTickets(hiveRoot: string | null, workerId: str
   }
   return removed;
 }
+
+export interface UnpushedBranch {
+  worktree: string;
+  /** The checked-out branch, or 'HEAD' when detached. */
+  branch: string;
+  tip: string;
+  upstream: string | null;
+}
+
+/** The worker's branches that a reap would strand (AEON-2473: w2443 was reaped with two committed, unpushed
+ *  branches). Scans `<worktreesRoot>/<workerId>` and the worktrees directly under it; a tip counts as unpushed when it
+ *  is ahead of its upstream, or, with no upstream, is on no remote branch. null when git could not answer. */
+export function unpushedWorkerBranches(worktreesRoot: string, workerId: string): UnpushedBranch[] | null {
+  if (!/^[A-Za-z0-9._-]+$/.test(workerId)) return [];
+  const base = join(worktreesRoot, workerId);
+  if (!existsSync(base)) return [];
+  const dirs = [base];
+  try {
+    for (const name of readdirSync(base)) {
+      const dir = join(base, name);
+      if (lstatSync(dir).isDirectory()) dirs.push(dir);
+    }
+  } catch { return null; }
+  const git = (cwd: string, ...args: string[]): string | null => {
+    const r = spawnSync('git', ['-C', cwd, ...args], { encoding: 'utf8', timeout: 5_000 });
+    return r.status === 0 ? String(r.stdout).trim() : null;
+  };
+  const out: UnpushedBranch[] = [];
+  for (const dir of dirs) {
+    if (!existsSync(join(dir, '.git'))) continue;   // a worktree has a .git file, a clone a .git dir
+    const tip = git(dir, 'rev-parse', '--short', 'HEAD');
+    const branch = git(dir, 'rev-parse', '--abbrev-ref', 'HEAD');
+    if (tip === null || branch === null) return null;
+    const upstream = branch === 'HEAD' ? null : git(dir, 'rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}');
+    if (upstream) {
+      const ahead = git(dir, 'rev-list', '--count', '@{u}..HEAD');
+      if (ahead === null) return null;
+      if (Number(ahead) > 0) out.push({ worktree: dir, branch, tip, upstream });
+    } else {
+      const remotes = git(dir, 'branch', '-r', '--contains', 'HEAD');
+      if (remotes === null) return null;
+      if (!remotes) out.push({ worktree: dir, branch, tip, upstream: null });
+    }
+  }
+  return out;
+}
+
+/** One paragraph for god's reap notice. */
+export function describeUnpushed(found: UnpushedBranch[] | null): string {
+  if (found === null) return 'Its worktrees could not be read, so check them for unpushed branches by hand.';
+  if (!found.length) return 'Every branch in its worktrees is on its remote.';
+  const lines = found.map((b) => `- ${b.branch} at ${b.tip} in ${b.worktree} (${b.upstream ? `ahead of ${b.upstream}` : 'on no remote'})`);
+  return `These branches are NOT pushed, so push or integrate them before the worktree is cleaned up:\n${lines.join('\n')}`;
+}
