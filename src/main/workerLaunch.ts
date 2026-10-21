@@ -75,3 +75,12 @@ export function buildWorkerLaunch(opts: {
   const args = [...flags, ...(model && !flags.includes('--model') ? ['--model', model] : [])];
   return { bin, args, command };
 }
+
+/** The closing instruction on every god-hired worker's objective. Hive policy wants a worker's feature branch pushed
+ *  (god integrates from the remote); this used to say "Do NOT push to any remote", so a worker got two contradicting
+ *  orders and one ended unpushed and was reaped without a done message (AEON-2476). */
+export const WORKER_COMPLETION_NOTE =
+  '[WORKER COMPLETION] When finished, commit your work and push your feature branch to its remote. Never push main '
+  + 'or any tag: god is the sole integrator and tags releases. Then signal done by sending ONE outbox message to god '
+  + 'with "act":"done", the branch name and its pushed sha, and a short result summary. That releases this ephemeral '
+  + 'worker (its terminal is closed and the branch is handed to god).';
