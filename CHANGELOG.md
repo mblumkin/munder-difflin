@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- A hired worker is now told to push its feature branch (never main or a tag) before it reports
+  done. Its instructions used to forbid pushing at all, which contradicted the hive's own rule
+  that finished work sits on a pushed branch, and a worker could end with its work unpushed
+  (AEON-2476).
+
 ## [0.5.18] - 2026-10-20 (local-only, not a public release)
 
 ### Fixed
