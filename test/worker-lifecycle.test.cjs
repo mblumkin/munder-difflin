@@ -87,8 +87,8 @@ test('captured children are terminated leaf first without touching unrelated pro
   assert.deepEqual(called, [[103, 'SIGTERM'], [102, 'SIGTERM']]);
 });
 
-test('worker scratch cleanup preserves tracked evidence and removes only uncited scratch', () => {
-  const { removeWorkerScratchIfSafe } = loadTs('src/main/workerScratch.ts');
+test('worker scratch cleanup preserves tracked evidence and archives uncited scratch', () => {
+  const { archiveWorkerScratchIfSafe } = loadTs('src/main/workerScratch.ts');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aeon2422-'));
   try {
     assert.equal(spawnSync('git', ['init', '-q', root]).status, 0);
@@ -99,10 +99,12 @@ test('worker scratch cleanup preserves tracked evidence and removes only uncited
     fs.writeFileSync(tracked, 'proof\n');
     fs.writeFileSync(untracked, 'temporary\n');
     assert.equal(spawnSync('git', ['-C', root, 'add', tracked]).status, 0);
-    assert.equal(removeWorkerScratchIfSafe(root, 'worker-one'), 'tracked');
+    assert.equal(archiveWorkerScratchIfSafe(root, 'worker-one').result, 'tracked');
     assert.equal(fs.readFileSync(tracked, 'utf8'), 'proof\n');
-    assert.equal(removeWorkerScratchIfSafe(root, 'worker-two'), 'removed');
+    const moved = archiveWorkerScratchIfSafe(root, 'worker-two');
+    assert.equal(moved.result, 'archived');
     assert.equal(fs.existsSync(untracked), false);
+    assert.equal(fs.readFileSync(path.join(moved.to, 'scratch.txt'), 'utf8'), 'temporary\n');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
