@@ -1,0 +1,17 @@
+#!/bin/sh
+# AEON-2553: every fork commit names the AEON card it serves, so a sweep by card id finds every shipped fix.
+# 61497a29f (the AEON-2501 fix) named none, and the card stayed open after v0.5.20 shipped it.
+# A merge (an upstream sync, a cut's merge commits) needs no id. Anything else without one:
+#   MD_COMMIT_NO_CARD='<why>' git commit ...   records "No-Card: <why>" in the message.
+msg="$1"
+if git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then exit 0; fi
+# Git drops '#' lines after this hook runs, so an id there would not survive.
+if grep -v '^#' "$msg" | grep -Eq 'AEON-[0-9]+'; then exit 0; fi
+if [ -n "${MD_COMMIT_NO_CARD:-}" ]; then
+  printf '\nNo-Card: %s\n' "$MD_COMMIT_NO_CARD" >> "$msg"
+  exit 0
+fi
+echo "commit-msg: refusing a commit that names no AEON card (AEON-2553)." >&2
+echo "  Put the card id in the message, e.g. 'AEON-1234: what changed'." >&2
+echo "  For a commit that serves no card: MD_COMMIT_NO_CARD='<why>' git commit ..." >&2
+exit 1

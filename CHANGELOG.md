@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- The fork refuses a commit whose message names no AEON card, so a sweep by card id finds every
+  shipped fix (one did not, and its card stayed open after the release). Merges need no id, and
+  `MD_COMMIT_NO_CARD='<why>'` records a reason in the message. `npm install` turns the hook on,
+  and `tools/release-card-status.cjs` lists the cards a tag ships with their status (AEON-2553).
+
 ## [0.5.21] - 2026-10-21 (local-only, not a public release)
 
 ### Fixed

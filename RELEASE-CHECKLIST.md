@@ -8,6 +8,10 @@ successful release never touches.
 
 ## Before the tag: mechanical gates (run these first)
 
+- [ ] **Every card the tag ships is listed for closing (AEON-2553).** Run
+  `node tools/release-card-status.cjs v<previous> HEAD --tasks <hive>/tasks.json` and send god the
+  cards it shows that are not done, so they close at the tag. Check each commit it lists as naming
+  no card: none should be a card's fix.
 - [ ] **`npm run check:links` passes.** Every download link in `RELEASE.md` and every advertised
   version in `docs/index.html` / `docs/llms.txt` must match `package.json`. electron-builder bakes
   the version into each artifact name, so a version left behind here turns the release page's
