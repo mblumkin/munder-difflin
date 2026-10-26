@@ -350,6 +350,12 @@ export function agentModels(): ModelOption[] {
   return modelsForProvider('claude');
 }
 
+/** `known` plus a row for a saved model that has none (one dropped from the
+ *  catalog), so a picker can still show what is actually in use. */
+export function withCurrentModel(known: ModelOption[], model: string | undefined, label: string): ModelOption[] {
+  return model && !known.some((m) => m.id === model) ? [...known, { id: model, label }] : known;
+}
+
 /** Providers shown in the Command Center's cross-provider model picker.
  *  God must remain on a provider with a working inbox drain; otherwise switching
  *  to a terminal-only provider would silently disable orchestration. */

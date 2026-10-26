@@ -22,7 +22,7 @@ require.cache[electron] = {
 };
 
 const { readConfig, writeConfig, resetConfig, modelForRole } = loadTs('src/main/config.ts');
-const { ASSISTANT_MODEL } = loadTs('src/renderer/src/store/config.ts');
+const { ASSISTANT_MODEL, agentModels, withCurrentModel } = loadTs('src/renderer/src/store/config.ts');
 
 test.after(() => fs.rmSync(userData, { recursive: true, force: true }));
 
@@ -51,4 +51,13 @@ test('the Claude picker offers no 4.x model', () => {
 test('a saved 4.x god model is kept, not switched to the new default', () => {
   writeConfig({ godModel: 'claude-opus-4-8' });
   assert.equal(modelForRole({ isGod: true }, readConfig()), 'claude-opus-4-8');
+});
+
+test('a saved default model with no row gets a "(current)" chip; a known one adds nothing', () => {
+  const known = agentModels();
+  const shown = withCurrentModel(known, 'claude-opus-4-8', 'claude-opus-4-8 (current)');
+  assert.deepEqual(shown.slice(0, known.length), known);
+  assert.deepEqual(shown.at(-1), { id: 'claude-opus-4-8', label: 'claude-opus-4-8 (current)' });
+  assert.equal(withCurrentModel(known, 'claude-fable-5', 'x'), known);
+  assert.equal(withCurrentModel(known, undefined, 'x'), known);
 });
