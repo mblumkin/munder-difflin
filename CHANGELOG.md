@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- Unattended agents keep the hive's usage snapshot fresh again. Each status update is passed to
+  `~/.claude/statusline.sh`, which writes `usage-window.json` for the 95% weekly park rule. The
+  hive added this to `bin/cth-hook.cjs` by hand, and the app rewrote the file without it on every
+  start (AEON-2594).
+
 ## [0.5.23] - 2026-10-26 (local-only, not a public release)
 
 Ships the 0.5.22 changes below too: 0.5.22 was tagged but never built.

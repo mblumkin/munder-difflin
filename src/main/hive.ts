@@ -3832,10 +3832,31 @@ const GENERATED_HIVE_DOCS = [
 // A minimal pipe: read the hook payload on stdin, tag it with this agent's id,
 // forward it to the hive's UDS, and relay the response back to `claude`. All the
 // real logic lives in the main process (HookServer). Never blocks a stop on error.
+// Status mode also feeds ~/.claude/statusline.sh, the usage-window.json writer the
+// hive's park rule reads (AEON-2594): the hive's copy is regenerated, so a hand edit
+// there is reverted on the next bootstrap.
 const HOOK_SHIM = `#!/usr/bin/env node
 'use strict';
 const net = require('net');
+const fs = require('fs');
+const path = require('path');
+const { spawn } = require('child_process');
 const isStatus = process.argv.includes('--status');
+function feedUsageWriter(input) {
+  const writer = path.join(process.env.HOME || '', '.claude', 'statusline.sh');
+  if (!fs.existsSync(writer)) return Promise.resolve();
+  // The writer owns the shared snapshot lock. It also renders a separate status
+  // line, so discard its output and let the session's context gauge print first.
+  return new Promise((resolve) => {
+    try {
+      const child = spawn('bash', [writer], { detached: true, stdio: ['pipe', 'ignore', 'ignore'] });
+      child.on('error', resolve);
+      child.stdin.on('error', resolve);
+      child.stdin.end(input, resolve);
+      child.unref();
+    } catch (_) { resolve(); }
+  });
+}
 let data = '';
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', (d) => { data += d; });
@@ -3857,14 +3878,16 @@ process.stdin.on('end', () => {
       const pct = Math.round((used / size) * 100);
       process.stdout.write('ctx ' + Math.round(used / 1000) + 'k/' + Math.round(size / 1000) + 'k (' + pct + '%)');
     }
+    const writerFlushed = feedUsageWriter(data);
+    const done = () => writerFlushed.then(() => process.exit(0));
     if (sock) {
       try {
         const c = net.createConnection(sock, () => { c.end(JSON.stringify(payload) + '\\n'); });
         c.on('error', () => {});
-        c.on('close', () => process.exit(0));
-      } catch (_) { process.exit(0); }
+        c.on('close', done);
+      } catch (_) { done(); }
     } else {
-      process.exit(0);
+      done();
     }
     setTimeout(() => process.exit(0), 1500).unref();
     return;
