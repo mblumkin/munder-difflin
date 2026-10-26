@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- The model pickers gain Haiku 5.5 (Claude), Gemini 4 Argon High and Gemini 3.8 Flash High,
+  Medium and Low (Antigravity), and Gemini 4 Argon High and Gemini 3.8 Flash (Cursor). Copilot's
+  no-flag row now reads "Copilot default". The rows come from upstream's catalog and land in both
+  the built-in list and the remote list (AEON-2586).
+
 ## [0.5.22] - 2026-10-25 (local-only, not a public release)
 
 ### Fixed
