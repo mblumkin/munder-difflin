@@ -51,7 +51,7 @@ export interface AgentUsageSample {
   output: number;
   cacheRead: number;
   cacheCreation: number;
-  /** Normalized model id (`claude-opus-4-8`, no `[1m]` suffix). */
+  /** Normalized model id (`claude-fable-5-1`, no `[1m]` suffix). */
   model: string;
   usd: number;
 }

@@ -612,7 +612,7 @@ export function FullscreenTerminal({ config }: FullscreenTerminalProps) {
   );
 }
 
-/** Model ids are long and mostly boilerplate ("claude-opus-4-8[1m]",
+/** Model ids are long and mostly boilerplate ("claude-fable-5-1[1m]",
  *  "anthropic/claude-sonnet-4-5"). The roster has ~120px, so show the part that
  *  distinguishes one agent from another and keep the full id in the tooltip. */
 function shortModel(model?: string): string | null {

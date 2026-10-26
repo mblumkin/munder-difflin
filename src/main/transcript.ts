@@ -135,7 +135,7 @@ export interface AgentUsage {
   cacheReadTokens: number;
   cacheWriteTokens: number;
   estimatedCostUsd: number;
-  /** The most-recently-seen model id (normalized, e.g. `claude-opus-4-8`), or
+  /** The most-recently-seen model id (normalized, e.g. `claude-fable-5-1`), or
    *  undefined if no priced record was found. Lets the UI label the row. */
   model?: string;
 }

@@ -76,7 +76,7 @@ export interface Agent {
    *  spawn flags. Defaults to 'claude' when unset (legacy agents / inferred
    *  from command). */
   provider?: AgentProvider;
-  /** the model this agent runs on (e.g. 'claude-sonnet-4-6[1m]' or 'gemini-3-pro');
+  /** the model this agent runs on (e.g. 'claude-sonnet-5-5[1m]' or 'gemini-3-pro');
    *  drives the model selector + the --model arg used when (re)spawning the agent */
   model?: string;
   /** the last prompt the user submitted to this agent in Claude Code —

@@ -70,10 +70,10 @@ export interface HarnessConfig {
    *  so an absent value reads as off. Mirrors src/main/config.ts. */
   orchestratorMaySpawn?: boolean;
   defaultCommand: string;
-  /** Default model for newly spawned agents (e.g. 'claude-sonnet-4-6[1m]'); unset = CLI default. */
+  /** Default model for newly spawned agents (e.g. 'claude-sonnet-5-5[1m]'); unset = CLI default. */
   defaultModel?: string;
   /** Which provider+model powers the GOD orchestrator ("Michael"). Default
-   *  'claude' / 'claude-opus-4-8'. Mirrors src/main/config.ts. */
+   *  'claude' / 'claude-fable-5-1'. Mirrors src/main/config.ts. */
   godProvider?: AgentProvider;
   godModel?: string;
   /** Per-server consent for the default MCP bundle, keyed by catalog id (mirrors
@@ -154,9 +154,8 @@ export interface HarnessConfig {
 }
 
 /** The Sonnet model with the 1M-token context window — used for Michael's prep
- *  assistant (cheap, large-context context gathering). Mirrors ASSISTANT_MODEL
- *  in src/main/assistant.ts; keep the two in sync. */
-export const ASSISTANT_MODEL = 'claude-sonnet-4-6[1m]';
+ *  assistant (cheap, large-context context gathering). */
+export const ASSISTANT_MODEL = 'claude-sonnet-5-5[1m]';
 
 export interface ModelOption {
   /** undefined = use the CLI default (no --model flag) */
@@ -349,6 +348,12 @@ export function modelsForProvider(provider: AgentProvider): ModelOption[] {
  *  would still be showing the baked list after a remote refresh landed. */
 export function agentModels(): ModelOption[] {
   return modelsForProvider('claude');
+}
+
+/** `known` plus a row for a saved model that has none (one dropped from the
+ *  catalog), so a picker can still show what is actually in use. */
+export function withCurrentModel(known: ModelOption[], model: string | undefined, label: string): ModelOption[] {
+  return model && !known.some((m) => m.id === model) ? [...known, { id: model, label }] : known;
 }
 
 /** Providers shown in the Command Center's cross-provider model picker.

@@ -251,6 +251,7 @@
     },
     "agentsModels": {
       "defaultModel": "默认智能体模型",
+      "currentModel": "{{model}}（当前）",
       "defaultModelDesc": "每个新生成的 Claude 智能体（含 {{godName}}）默认使用此模型，除非按智能体单独选择。在模型选择器中标记为「· 默认」。",
       "savedNote": "已保存——适用于新生成的智能体",
       "saveFailed": "保存失败",
@@ -656,8 +657,8 @@
     "orchestrator": {
       "descPlain": "{{godName}} 就是你的克隆——他读取你的请求，拆成任务，分给合适的智能体。他是楼层的老板；而你仍然是他的老板。选择用什么 AI 引擎驱动他。",
       "desc": "{{godName}} 就是你的克隆——你刚认识的那层楼的老板。他分流你的请求、分配任务、管理团队，同时把真正需要你的情况升级上来。选择驱动他的引擎和模型；给他一个更长上下文、更强能力的模型。",
-      "cliAgentPlain": "一个<strong>CLI 智能体</strong>是运行在你电脑上的 AI 编程助手 —— 常见的有 Claude Code（Anthropic）、Codex（OpenAI）和 Antigravity（Google Gemini）。<strong>你的克隆体</strong>是常驻运行、打理整个办公室的那一个。我们推荐使用 Opus 4.8（1M）的 Claude Code。其他引擎之后可以随时添加或切换。",
-      "cliAgent": "每个选项都是一个<strong>CLI 引擎</strong>（Claude Code、Codex、Antigravity/Gemini，或本地代理如 Qwen）。标记为 INSTALLED 的引擎已在本机就绪；INSTALLS ON FIRST RUN 表示应用会在 {{godName}} 首次启动时进行安装。<strong>你的克隆体</strong>（{{godName}}）是统筹整个 hive 的引擎。推荐：Claude Code · Opus 4.8 · 1M。其他提供方之后可按智能体逐一接入。",
+      "cliAgentPlain": "一个<strong>CLI 智能体</strong>是运行在你电脑上的 AI 编程助手 —— 常见的有 Claude Code（Anthropic）、Codex（OpenAI）和 Antigravity（Google Gemini）。<strong>你的克隆体</strong>是常驻运行、打理整个办公室的那一个。我们推荐使用 Fable 5.1（1M）的 Claude Code。其他引擎之后可以随时添加或切换。",
+      "cliAgent": "每个选项都是一个<strong>CLI 引擎</strong>（Claude Code、Codex、Antigravity/Gemini，或本地代理如 Qwen）。标记为 INSTALLED 的引擎已在本机就绪；INSTALLS ON FIRST RUN 表示应用会在 {{godName}} 首次启动时进行安装。<strong>你的克隆体</strong>（{{godName}}）是统筹整个 hive 的引擎。推荐：Claude Code · Fable 5.1 · 1M。其他提供方之后可按智能体逐一接入。",
       "recommended": "推荐",
       "workersOnly": "仅限雇员",
       "workersOnlyHint": "暂时无法接收蜂巢邮件，因此不能运行你的分身——但雇佣工作智能体时仍然可用。",
