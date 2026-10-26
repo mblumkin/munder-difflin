@@ -826,6 +826,8 @@ export class HiveManager {
     if (meta.isGod) reg.godId = meta.id;
     this.atomicWriteJson(join(root, 'registry.json'), reg);
 
+    // AEON-2559: setArchived is bypassed here, so log the cleared flag or log.jsonl keeps saying archived.
+    if (prev?.archived) this.appendLog({ kind: 'archive', agentId: meta.id, archived: false });
     this.appendLog({ kind: 'spawn', agentId: meta.id, name: meta.name, isGod: !!meta.isGod });
     // Only logs on an invalid cwd (rare) — not a per-spawn line, so no log spam.
     if (!cwd.valid) {
