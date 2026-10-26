@@ -6,6 +6,19 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.5.22] - 2026-10-25 (local-only, not a public release)
+
+### Fixed
+
+- An agent that checks out an origin branch with `git checkout -b X origin/Y` lands on the new
+  branch. Its sandbox cannot write the shared repo config, and the failed tracking write left HEAD
+  on the old branch over the new tree, so status showed hundreds of phantom changes. Every agent's
+  git now runs with `branch.autoSetupMerge=false`, and no sandbox permission is widened (AEON-2498).
+- Two messages one agent sends in a row reach their recipient in the order they were sent. The
+  outbox was read in whatever order the filesystem kept it (AEON-2512).
+- A respawn that clears an agent's archived flag now logs `archive` with `archived: false`, so
+  `log.jsonl` agrees with the roster after an app start (AEON-2559).
+
 ### Added
 
 - The fork refuses a commit whose message names no AEON card, so a sweep by card id finds every
