@@ -202,14 +202,14 @@ export interface HarnessConfig {
   orchestratorMaySpawn: boolean;
   /** The command we run when spawning a new agent. */
   defaultCommand: string;
-  /** Default model for newly spawned agents (e.g. 'claude-sonnet-4-6[1m]'); unset = CLI default. */
+  /** Default model for newly spawned agents (e.g. 'claude-sonnet-5-5[1m]'); unset = CLI default. */
   defaultModel?: string;
   /** Which provider powers the GOD orchestrator ("Michael"). The persona is
    *  constant; only its engine is selectable. Default 'claude'. Eligible providers
    *  are those that can receive inbox (claude/codex/antigravity/qwen). */
   godProvider?: AgentProvider;
   /** The model GOD runs on. Unset falls back to the provider preset's
-   *  `recommendedOrchestratorModel`, then MODEL_GOD. Default 'claude-opus-4-8'. */
+   *  `recommendedOrchestratorModel`, then MODEL_GOD. Default 'claude-fable-5-1'. */
   godModel?: string;
   /** Per-server consent state for the default MCP bundle, keyed by catalog id.
    *  Seeded from MCP_CATALOG (safe-readonly ON, write/secret OFF); the user flips
@@ -428,7 +428,7 @@ const DEFAULTS: HarnessConfig = {
   orchestratorMaySpawn: false,
   defaultCommand: 'claude',
   godProvider: 'claude',
-  godModel: 'claude-opus-4-8',
+  godModel: 'claude-fable-5-1',
   // Global default model for every agent that hasn't picked one explicitly — wins
   // over the role-based tiers (modelForRole) in the spawn handler, so all agents
   // (incl. god) default to Fable 5. A per-agent model choice still overrides it.
@@ -743,9 +743,9 @@ export function resetConfig(): HarnessConfig {
 /** Model ids by tier (Lane A #6.4). Kept in sync with the claude list in
  *  src/shared/modelCatalog.json, which `agentModels()` in
  *  src/renderer/src/store/config.ts reads. */
-const MODEL_GOD = 'claude-opus-4-8';                  // orchestration — highest capability
-const MODEL_WORKER = 'claude-sonnet-4-6';             // general execution
-const MODEL_HELPER = 'claude-haiku-4-5-20251001';     // narrow, cheap helpers
+const MODEL_GOD = 'claude-fable-5-1';                 // orchestration — highest capability
+const MODEL_WORKER = 'claude-sonnet-5-5';             // general execution
+const MODEL_HELPER = 'claude-haiku-5-5';              // narrow, cheap helpers
 
 /** Minimal structural shape for tiering — a subset of AgentMeta so config.ts
  *  stays free of a hive.ts import. */
@@ -755,7 +755,7 @@ export interface RoleHint {
   capabilities?: string[];
 }
 
-/** Default model for an agent given its role (Lane A #6.4): Opus for the god,
+/** Default model for an agent given its role (Lane A #6.4): Fable for the god,
  *  Haiku for narrow helpers (triage / routing / verification / formatting),
  *  Sonnet for general workers. Returns a model id (matching the catalog) or
  *  undefined to fall back to the CLI default. This is only a DEFAULT — an
@@ -766,7 +766,7 @@ export function modelForRole(
 ): string | undefined {
   if (meta.isGod) {
     // GOD engine is selectable: an explicit godModel wins, else the chosen
-    // provider's recommended orchestrator model, else the legacy Opus default.
+    // provider's recommended orchestrator model, else MODEL_GOD.
     const preset = providerPreset(config?.godProvider ?? 'claude');
     return config?.godModel ?? preset.recommendedOrchestratorModel ?? MODEL_GOD;
   }

@@ -12,6 +12,12 @@ All notable changes to this project are documented here. The format is based on
   Medium and Low (Antigravity), and Gemini 4 Argon High and Gemini 3.8 Flash (Cursor). Copilot's
   no-flag row now reads "Copilot default". The rows come from upstream's catalog and land in both
   the built-in list and the remote list (AEON-2586).
+- The Claude picker drops the 4.x models (Opus 4.8, Sonnet 4.6, both with their 1M rows, and
+  Haiku 4.5) and adds Sonnet 5.5 · 1M. The defaults move to 5.x: the orchestrator runs Fable 5.1,
+  workers Sonnet 5.5, helpers and condensing Haiku 5.5, and the prep assistant Sonnet 5.5 · 1M.
+  Onboarding recommends Fable 5.1 (1M). A model you already saved is kept as it is, and the agent
+  pickers show it as the current model. 4.x prices stay, so older sessions are still costed
+  (AEON-2586).
 
 ## [0.5.22] - 2026-10-25 (local-only, not a public release)
 

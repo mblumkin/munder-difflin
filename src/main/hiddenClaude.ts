@@ -28,7 +28,7 @@ import { ensureKilled } from './procKill';
 const BOOT_QUIET_MS = 1500;
 
 export interface HiddenClaudeOptions {
-  /** Model to use (e.g. 'claude-haiku-4-5'). */
+  /** Model to use (e.g. 'claude-haiku-5-5'). */
   model: string;
   /** Working directory for the claude session. */
   cwd: string;

@@ -270,7 +270,7 @@ export interface HarnessConfig {
   defaultCommand: string;
   defaultModel?: string;
   /** Which provider+model powers the GOD orchestrator ("Michael"). Default
-   *  'claude' / 'claude-opus-4-8'. Mirrors src/main/config.ts. */
+   *  'claude' / 'claude-fable-5-1'. Mirrors src/main/config.ts. */
   godProvider?: AgentProvider;
   godModel?: string;
   /** Per-server consent for the default MCP bundle, keyed by catalog id. Mirrors

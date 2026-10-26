@@ -11,14 +11,10 @@
       { "id": "claude-fable-5-1[1m]", "label": "Fable 5.1 · 1M", "minAppVersion": null, "maxAppVersion": null },
       { "id": "claude-fable-5", "label": "Fable 5", "minAppVersion": null, "maxAppVersion": null },
       { "id": "claude-opus-5", "label": "Opus 5 · 1M", "minAppVersion": null, "maxAppVersion": null },
-      { "id": "claude-opus-4-8", "label": "Opus 4.8", "minAppVersion": null, "maxAppVersion": null },
-      { "id": "claude-opus-4-8[1m]", "label": "Opus 4.8 · 1M", "minAppVersion": null, "maxAppVersion": null },
       { "id": "claude-sonnet-5-5", "label": "Sonnet 5.5", "minAppVersion": null, "maxAppVersion": null },
+      { "id": "claude-sonnet-5-5[1m]", "label": "Sonnet 5.5 · 1M", "minAppVersion": null, "maxAppVersion": null },
       { "id": "claude-sonnet-5", "label": "Sonnet 5", "minAppVersion": null, "maxAppVersion": null },
-      { "id": "claude-sonnet-4-6", "label": "Sonnet 4.6", "minAppVersion": null, "maxAppVersion": null },
-      { "id": "claude-sonnet-4-6[1m]", "label": "Sonnet 4.6 · 1M", "minAppVersion": null, "maxAppVersion": null },
-      { "id": "claude-haiku-5-5", "label": "Haiku 5.5", "minAppVersion": null, "maxAppVersion": null },
-      { "id": "claude-haiku-4-5-20251001", "label": "Haiku 4.5", "minAppVersion": null, "maxAppVersion": null }
+      { "id": "claude-haiku-5-5", "label": "Haiku 5.5", "minAppVersion": null, "maxAppVersion": null }
     ],
     "codex": [
       { "label": "CLI default", "minAppVersion": null, "maxAppVersion": null },

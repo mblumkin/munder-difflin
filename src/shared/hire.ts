@@ -63,7 +63,7 @@ export interface HireManifest {
   accent?: string;
   /** Which CLI the role is designed for. Default: the user's default provider. */
   provider?: HireProvider;
-  /** Model id/label for that provider (e.g. 'claude-sonnet-4-6'). */
+  /** Model id/label for that provider (e.g. 'claude-sonnet-5-5'). */
   model?: string;
   /** Extra flag-shaped args appended to the locally-built spawn command. Each flag
    *  must be in the safe-flag allowlist (see SAFE_FLAG_NAMES) and shell-metachar-free;
@@ -114,7 +114,7 @@ const FLAG_RE = /^[A-Za-z0-9._\/=:,@+-]{1,100}$/;
  *  on Windows a `.cmd`/`.bat` provider shim routes the command through cmd.exe,
  *  where an unquoted `&`/`|`/`^`/`<`/`>`/`(`/`)` would chain a second command.
  *  Real model ids/labels only need letters, digits, spaces, and a little
- *  punctuation: `claude-sonnet-4-6[1m]`, `Gemini 3.1 Pro (High)`. No quotes,
+ *  punctuation: `claude-sonnet-5-5[1m]`, `Gemini 3.1 Pro (High)`. No quotes,
  *  backticks, `$`, `;`, `&`, `|`, `^`, `<`, `>`, `%`, `!`. (The command field
  *  stays editable, so a legitimate exotic value can still be typed by hand.) */
 const MODEL_RE = /^[A-Za-z0-9 ._()[\]\/:@+-]{1,80}$/;

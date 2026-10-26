@@ -70,10 +70,10 @@ export interface HarnessConfig {
    *  so an absent value reads as off. Mirrors src/main/config.ts. */
   orchestratorMaySpawn?: boolean;
   defaultCommand: string;
-  /** Default model for newly spawned agents (e.g. 'claude-sonnet-4-6[1m]'); unset = CLI default. */
+  /** Default model for newly spawned agents (e.g. 'claude-sonnet-5-5[1m]'); unset = CLI default. */
   defaultModel?: string;
   /** Which provider+model powers the GOD orchestrator ("Michael"). Default
-   *  'claude' / 'claude-opus-4-8'. Mirrors src/main/config.ts. */
+   *  'claude' / 'claude-fable-5-1'. Mirrors src/main/config.ts. */
   godProvider?: AgentProvider;
   godModel?: string;
   /** Per-server consent for the default MCP bundle, keyed by catalog id (mirrors
@@ -154,9 +154,8 @@ export interface HarnessConfig {
 }
 
 /** The Sonnet model with the 1M-token context window — used for Michael's prep
- *  assistant (cheap, large-context context gathering). Mirrors ASSISTANT_MODEL
- *  in src/main/assistant.ts; keep the two in sync. */
-export const ASSISTANT_MODEL = 'claude-sonnet-4-6[1m]';
+ *  assistant (cheap, large-context context gathering). */
+export const ASSISTANT_MODEL = 'claude-sonnet-5-5[1m]';
 
 export interface ModelOption {
   /** undefined = use the CLI default (no --model flag) */
