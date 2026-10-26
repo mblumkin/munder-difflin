@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.5.23] - 2026-10-26 (local-only, not a public release)
+
+Ships the 0.5.22 changes below too: 0.5.22 was tagged but never built.
+
 ### Changed
 
 - The model pickers gain Haiku 5.5 (Claude), Gemini 4 Argon High and Gemini 3.8 Flash High,
@@ -16,8 +20,8 @@ All notable changes to this project are documented here. The format is based on
   Haiku 4.5) and adds Sonnet 5.5 · 1M. The defaults move to 5.x: the orchestrator runs Fable 5.1,
   workers Sonnet 5.5, helpers and condensing Haiku 5.5, and the prep assistant Sonnet 5.5 · 1M.
   Onboarding recommends Fable 5.1 (1M). A model you already saved is kept as it is, and the agent
-  pickers and the Settings default-model chips show it as the current model. 4.x prices stay, so older sessions are still costed
-  (AEON-2586).
+  pickers and the Settings default-model chips show it as the current model. 4.x prices stay, so
+  older sessions are still costed (AEON-2586).
 
 ## [0.5.22] - 2026-10-25 (local-only, not a public release)
 
