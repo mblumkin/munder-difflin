@@ -1,3 +1,3 @@
-- **A finished worker's folder is archived, so a patch it delivered is kept.**
-- **The idle reaper works again on a busy machine.**
-- **Agent registration and inbox filing commit only their own files.**
+- **An agent that checks out an origin branch lands on it, with no phantom changes.**
+- **Messages from one agent arrive in the order it sent them.**
+- **The fork refuses a commit that names no AEON card.**

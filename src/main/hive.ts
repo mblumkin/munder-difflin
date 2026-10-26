@@ -826,6 +826,8 @@ export class HiveManager {
     if (meta.isGod) reg.godId = meta.id;
     this.atomicWriteJson(join(root, 'registry.json'), reg);
 
+    // AEON-2559: setArchived is bypassed here, so log the cleared flag or log.jsonl keeps saying archived.
+    if (prev?.archived) this.appendLog({ kind: 'archive', agentId: meta.id, archived: false });
     this.appendLog({ kind: 'spawn', agentId: meta.id, name: meta.name, isGod: !!meta.isGod });
     // Only logs on an invalid cwd (rare) — not a per-spawn line, so no log spam.
     if (!cwd.valid) {
@@ -855,6 +857,14 @@ export class HiveManager {
     // PowerShell, so every such instruction was dead on a Windows floor. Commands
     // we write for an agent to run bake `nodeCommand()`'s absolute path instead.
     env.HIVE_NODE = this.nodeCommand();
+    // AEON-2498: an agent's sandbox cannot write the shared repo config, and `git checkout -b X origin/Y`
+    // writes branch tracking there AFTER switching the index and tree, so the failure left HEAD on the old
+    // branch over the new tree. Git's environment config turns the tracking write off for every git call
+    // the agent makes; it appends after any entries the parent environment already carries.
+    const gitCfg = Number(process.env.GIT_CONFIG_COUNT) || 0;
+    env[`GIT_CONFIG_KEY_${gitCfg}`] = 'branch.autoSetupMerge';
+    env[`GIT_CONFIG_VALUE_${gitCfg}`] = 'false';
+    env.GIT_CONFIG_COUNT = String(gitCfg + 1);
     // Generic light/dark hint for TUIs that paint their own background. The app
     // defaults to light but every agent CLI assumed a dark terminal, so Crush and
     // OpenCode looked pasted into a light window. COLORFGBG is the classic
@@ -1949,7 +1959,8 @@ export class HiveManager {
       // `join(file, '.gitignore')` with ENOTDIR into the best-effort catch. Harmless (nothing
       // escapes) but pure noise; the outbox check already filters strays out for free.
       ensureMineIgnore(join(agentsDir, id));
-      for (const f of readdirSync(outbox)) {
+      // Name order is send order (agents name outbox files by timestamp); readdir order is the filesystem's (AEON-2512).
+      for (const f of readdirSync(outbox).sort()) {
         if (!f.endsWith('.json')) continue;
         const full = join(outbox, f);
         try {

@@ -1,6 +1,6 @@
 {
   "name": "munder-difflin",
-  "version": "0.5.21",
+  "version": "0.5.22",
   "publishedVersion": "0.4.6",
   "private": true,
   "description": "Clones for you and your team, working 24/7 — a free, local-first multi-agent harness that turns the CLI coding agent you already run into a clone of you, coordinating an office of agents on your machine.",
@@ -16,6 +16,7 @@
     "build": "electron-vite build && npm run copy:main-assets",
     "copy:main-assets": "node tools/copy-main-assets.cjs",
     "preview": "electron-vite preview",
+    "prepare": "node tools/install-git-hooks.cjs",
     "postinstall": "electron-builder install-app-deps && node tools/ensure-pty-perms.cjs && node tools/patch-node-pty-conpty.cjs && node tools/patch-tunnelmole-selfdep.cjs",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
