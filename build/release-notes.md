@@ -1,4 +1,4 @@
+- **Unattended agents keep the usage snapshot fresh.**
 - **New hives run the Claude 5.x models, and a model you saved is kept.**
 - **An agent that checks out an origin branch lands on it, with no phantom changes.**
 - **Messages from one agent arrive in the order it sent them.**
-- **The fork refuses a commit that names no AEON card.**
