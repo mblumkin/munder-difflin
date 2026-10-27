@@ -5376,6 +5376,12 @@ function runWorkerWakeBeat(): void {
     });
   }
   const nudged = new Set(workerWake.decide(facts, now));
+  // A typed wake the CLI never took as a prompt (AEON-2660): its ids are back in
+  // play, and the log is the only place that loss is visible afterwards.
+  for (const u of workerWake.takeUnacked()) {
+    console.warn(`[worker-wake] ${u.agentId}: no UserPromptSubmit after the wake typed ${Math.round((now - u.typedAt) / 1000)}s ago; ids released for a retry`);
+    hive.appendLog({ kind: 'worker-wake', state: 'unacked', agentId: u.agentId, ids: u.ids, typedAt: new Date(u.typedAt).toISOString() });
+  }
   for (const agentId of nudged) {
     const ptyId = ptyForAgent(agentId);
     if (!ptyId) continue;
@@ -5413,6 +5419,7 @@ function runWorkerWakeBeat(): void {
     const activeAt = Math.max(f.lastActivityAt ?? 0, workerWake.turnHookAt(f.agentId));
     const active = activeAt > 0 ? `${Math.round((now - activeAt) / 1000)}s ago` : 'never';
     console.warn(`[worker-wake] holding ${f.agentId}: ${hold} (mail pending ${Math.round(mailAge / 1000)}s, pty quiet ${quiet}, last activity ${active})`);
+    hive.appendLog({ kind: 'worker-wake', state: 'hold', agentId: f.agentId, hold, mailPendingS: Math.round(mailAge / 1000), ptyQuiet: quiet, lastActivity: active });
   }
 }
 

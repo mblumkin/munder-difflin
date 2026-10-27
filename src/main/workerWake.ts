@@ -68,6 +68,13 @@ export const WORKER_WAKE_HITL_REARM_MS = 5 * 60_000;
 export const WORKER_WAKE_STALL_MS = 90_000;
 /** Minimum age of pending mail before a held worker is reported in the log. */
 export const WORKER_WAKE_REPORT_MS = 60_000;
+/** A typed wake is HEARD only when the worker's CLI shows a UserPromptSubmit
+ *  this soon after the typing began; otherwise its ids are released for a retry
+ *  (AEON-2660). A successful Enter WRITE proves nothing: on 2026-10-27 a nudge
+ *  typed while the worker was mid-turn sat in its input box as a draft for
+ *  58 minutes, announced and therefore never retyped, while the stall rule read
+ *  the rest of that same turn as work done on the mail. */
+export const WORKER_WAKE_ACK_MS = 10_000;
 
 /** A hook event message that means "the agent needs the human" — permission /
  *  approve / confirm prompts (mirrors the renderer's needsHuman detection in
@@ -149,7 +156,15 @@ export interface WorkerWakeFacts {
 export type WorkerWakeHold =
   | 'god' | 'no-mail' | 'no-pty'
   | 'delivery-paused' | 'paused' | 'halted'
-  | 'renderer-claim' | 'booting' | 'mid-turn' | 'draft' | 'boot-grace' | 'hitl' | 'announced' | 'cooldown';
+  | 'renderer-claim' | 'booting' | 'mid-turn' | 'draft' | 'boot-grace' | 'hitl' | 'announced' | 'awaiting-ack' | 'cooldown';
+
+/** A typed wake whose UserPromptSubmit never came: the ids went back to unheard. */
+export interface UnackedWake {
+  agentId: string;
+  ids: string[];
+  /** When the typing that was never acknowledged began. */
+  typedAt: number;
+}
 
 /** The inbox ids that count as mail: non-empty strings only. */
 function liveInboxIds(f: WorkerWakeFacts): Set<string> {
@@ -200,7 +215,7 @@ export class WorkerWakeWatchdog {
   private announcedInboxIds = new Map<string, Set<string>>();
   /** A renderer queue delivery reserved before it starts typing. The expiry
    *  releases a reservation if its renderer disappears mid-delivery. */
-  private rendererClaims = new Map<string, { token: number; ids: string[]; until: number }>();
+  private rendererClaims = new Map<string, { token: number; ids: string[]; since: number; until: number }>();
   private nextRendererToken = 1;
   private announcedResumeSeq = new Map<string, number>();
   /** agentId → timestamp of the last needsHuman hook notification. */
@@ -213,6 +228,16 @@ export class WorkerWakeWatchdog {
   /** agentId → when its hold was last reported, so the beat logs a held worker
    *  once per cooldown instead of every 15 s. */
   private lastHoldReportAt = new Map<string, number>();
+  /** agentId → its latest UserPromptSubmit hook: the proof a typed wake was heard. */
+  private lastPromptAt = new Map<string, number>();
+  /** agentId → a typed wake awaiting its UserPromptSubmit (WORKER_WAKE_ACK_MS). */
+  private pendingAcks = new Map<string, { ids: Set<string>; since: number }>();
+  /** agentId → when its last unacknowledged wake was released: both delivery
+   *  paths wait a cooldown before typing again, so a CLI that keeps swallowing
+   *  the Enter is not handed a growing draft every few seconds. */
+  private lastUnackedAt = new Map<string, number>();
+  /** Released wakes not yet collected by the beat's log (takeUnacked). */
+  private unacked: UnackedWake[] = [];
 
   /** Record a PTY spawn so its boot sequence is left alone. */
   noteSpawn(ptyId: string, at = Date.now()): void {
@@ -226,6 +251,14 @@ export class WorkerWakeWatchdog {
     if (!agentId) return;
     this.hookSeenAt.set(agentId, at);
     if (isTurnHook(event) && at > (this.lastTurnHookAt.get(agentId) ?? 0)) this.lastTurnHookAt.set(agentId, at);
+    if (event === 'UserPromptSubmit') {
+      if (at > (this.lastPromptAt.get(agentId) ?? 0)) this.lastPromptAt.set(agentId, at);
+      const pending = this.pendingAcks.get(agentId);
+      if (pending && at >= pending.since) {
+        this.pendingAcks.delete(agentId);
+        this.announcedInboxIds.set(agentId, pending.ids);
+      }
+    }
     if (classifyHook(event, message) === 'needsHuman') this.lastHumanNeedsAt.set(agentId, at);
   }
 
@@ -255,6 +288,9 @@ export class WorkerWakeWatchdog {
     this.hookSeenAt.delete(agentId);
     this.lastTurnHookAt.delete(agentId);
     this.lastHoldReportAt.delete(agentId);
+    this.lastPromptAt.delete(agentId);
+    this.pendingAcks.delete(agentId);
+    this.lastUnackedAt.delete(agentId);
     if (ptyId) this.spawnedAt.delete(ptyId);
   }
 
@@ -289,7 +325,12 @@ export class WorkerWakeWatchdog {
     // the worker is stalled, i.e. it demonstrably never acted on the announcement.
     const announced = this.announcedInboxIds.get(f.agentId);
     if (!newResume && announced && !stalled && !Array.from(inboxIds).some((id) => !announced.has(id))) return 'announced';
-    const lastNudge = this.lastNudgeAt.get(f.agentId) ?? 0;
+    // A wake typed moments ago may still be answered; typing again now would
+    // stack a second copy into the same input box.
+    const pending = this.pendingAcks.get(f.agentId);
+    if (!newResume && pending && now - pending.since < WORKER_WAKE_ACK_MS
+      && !Array.from(inboxIds).some((id) => !pending.ids.has(id))) return 'awaiting-ack';
+    const lastNudge = Math.max(this.lastNudgeAt.get(f.agentId) ?? 0, this.lastUnackedAt.get(f.agentId) ?? 0);
     if (lastNudge > 0 && now - lastNudge < WORKER_WAKE_COOLDOWN_MS) return 'cooldown';
     return null;
   }
@@ -298,6 +339,7 @@ export class WorkerWakeWatchdog {
    *  Remembers when it attempted (the cooldown); only submitted() marks the
    *  content heard (the edge trigger), so a failed write stays eligible. */
   decide(facts: readonly WorkerWakeFacts[], now = Date.now()): string[] {
+    this.releaseUnacked(now);
     const out: string[] = [];
     for (const f of facts) {
       const inboxIds = liveInboxIds(f);
@@ -312,14 +354,49 @@ export class WorkerWakeWatchdog {
     return out;
   }
 
-  /** Commit the exact wake that made it through both PTY writes (text + Enter).
-   *  A failed write leaves the event eligible after the attempt cooldown. */
-  submitted(agentId: string, inboxIds: readonly string[], resumeSeq?: number | null): void {
+  /** Record a wake that made it through both PTY writes (text + Enter). A failed
+   *  write leaves the event eligible after the attempt cooldown.
+   *
+   *  The written Enter is not the CLI taking a turn, so for a worker whose hooks
+   *  are live the ids are only announced once its UserPromptSubmit arrives at or
+   *  after `since` (when the typing began); without one inside WORKER_WAKE_ACK_MS
+   *  they are released (releaseUnacked). A worker that has never sent a hook
+   *  cannot prove a prompt either way and is announced at once, as before: the
+   *  #368 repeated-nudge loop otherwise comes back for every hook-less engine. */
+  submitted(agentId: string, inboxIds: readonly string[], resumeSeq?: number | null, since?: number): void {
     if (typeof resumeSeq === 'number' && resumeSeq > 0) {
       this.announcedResumeSeq.set(agentId, resumeSeq);
-    } else {
-      this.announcedInboxIds.set(agentId, new Set(inboxIds.filter((id) => typeof id === 'string' && id.length > 0)));
+      return;
     }
+    const ids = new Set(inboxIds.filter((id) => typeof id === 'string' && id.length > 0));
+    const typedAt = since ?? this.lastNudgeAt.get(agentId) ?? Date.now();
+    if (!this.hookSeenAt.has(agentId) || (this.lastPromptAt.get(agentId) ?? 0) >= typedAt) {
+      this.pendingAcks.delete(agentId);
+      this.announcedInboxIds.set(agentId, ids);
+      return;
+    }
+    this.pendingAcks.set(agentId, { ids, since: typedAt });
+  }
+
+  /** Release every wake whose UserPromptSubmit did not come within
+   *  WORKER_WAKE_ACK_MS: its ids become unheard again (so the edge trigger allows
+   *  a retry after the cooldown) and it is queued for takeUnacked(). */
+  private releaseUnacked(now: number): void {
+    for (const [agentId, pending] of this.pendingAcks) {
+      if (now - pending.since < WORKER_WAKE_ACK_MS) continue;
+      this.pendingAcks.delete(agentId);
+      // From the end of the ack window, not from now: the first beat after a
+      // long turn is often the first to look, and must not then wait a cooldown.
+      this.lastUnackedAt.set(agentId, pending.since + WORKER_WAKE_ACK_MS);
+      this.unacked.push({ agentId, ids: Array.from(pending.ids), typedAt: pending.since });
+    }
+  }
+
+  /** Released unacknowledged wakes since the last call, for the beat to log. */
+  takeUnacked(): UnackedWake[] {
+    const out = this.unacked;
+    this.unacked = [];
+    return out;
   }
 
   /** Reserve a worker's currently unread ids for the fast renderer queue.
@@ -329,15 +406,22 @@ export class WorkerWakeWatchdog {
     { status: 'claimed'; token: number } | { status: 'busy' } | { status: 'delivered' } {
     const ids = Array.from(new Set(inboxIds.filter((id) => typeof id === 'string' && id.length > 0)));
     if (!ids.length) return { status: 'delivered' };
+    this.releaseUnacked(now);
     const announced = this.announcedInboxIds.get(agentId);
     if (announced && ids.every((id) => announced.has(id))) return { status: 'delivered' };
+    // Still waiting on the last typed wake, or just gave up on one: keep the
+    // queued nudge and come back, rather than typing onto an unanswered draft.
+    const pending = this.pendingAcks.get(agentId);
+    if (pending && ids.every((id) => pending.ids.has(id))) return { status: 'busy' };
+    const unackedAt = this.lastUnackedAt.get(agentId) ?? 0;
+    if (unackedAt > 0 && now - unackedAt < WORKER_WAKE_COOLDOWN_MS) return { status: 'busy' };
     const claim = this.rendererClaims.get(agentId);
     if (claim && claim.until > now) return { status: 'busy' };
     if (claim) this.rendererClaims.delete(agentId);
     const lastMainAttempt = this.lastNudgeAt.get(agentId) ?? 0;
     if (lastMainAttempt > 0 && now - lastMainAttempt < 1_000) return { status: 'busy' };
     const token = this.nextRendererToken++;
-    this.rendererClaims.set(agentId, { token, ids, until: now + 30_000 });
+    this.rendererClaims.set(agentId, { token, ids, since: now, until: now + 30_000 });
     return { status: 'claimed', token };
   }
 
@@ -347,7 +431,7 @@ export class WorkerWakeWatchdog {
     const claim = this.rendererClaims.get(agentId);
     if (!claim || claim.token !== token) return;
     this.rendererClaims.delete(agentId);
-    if (sent && claim.until > now) this.submitted(agentId, claim.ids);
+    if (sent && claim.until > now) this.submitted(agentId, claim.ids, null, claim.since);
   }
 
   /** True once per WORKER_WAKE_COOLDOWN_MS per worker — the beat's log gate. */

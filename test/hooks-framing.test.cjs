@@ -56,7 +56,7 @@ async function openServer(t) {
     server.stop();
     fs.rmSync(base, { recursive: true, force: true });
   });
-  return { sock, routed, logs };
+  return { sock, routed, logs, server };
 }
 
 async function sendChunks(sock, chunks, pauseMs = 0, timeoutMs = 1000) {
@@ -185,4 +185,40 @@ test('payload one byte above the limit is rejected', async (t) => {
     bytes: MAX_HOOK_FRAME_BYTES + 1,
     limit: MAX_HOOK_FRAME_BYTES
   }]);
+});
+
+// AEON-2660: 287 rejections in a live hive.log named no sender. A CLI payload
+// leads with session_id and hook_event_name; the shim appends agent_id last.
+function oversizedCliFrame(head) {
+  const body = JSON.stringify({ ...head, tool_response: 'x'.repeat(MAX_HOOK_FRAME_BYTES + 10), agent_id: 'tail-only' });
+  return Buffer.from(`${body}\n`, 'utf8');
+}
+
+test('an oversized frame is attributed through its session to the agent that owns it', async (t) => {
+  const { sock, routed, logs, server } = await openServer(t);
+  // handle() is stubbed here, so seed the session map a real earlier frame would have filled.
+  server.sessionAgents.set('sess-1', 'jim-mstom791');
+  const frame = oversizedCliFrame({ session_id: 'sess-1', hook_event_name: 'PostToolUse', tool_name: 'Bash' });
+
+  const result = await sendChunks(sock, [frame]);
+
+  assert.equal(result.didClose, true);
+  assert.deepEqual(routed, []);
+  const [entry] = logs.filter((l) => l.kind === 'hook-frame-rejected');
+  assert.equal(entry.agentId, 'jim-mstom791');
+  assert.equal(entry.sessionId, 'sess-1');
+  assert.equal(entry.event, 'PostToolUse');
+  assert.equal(entry.tool, 'Bash');
+});
+
+test('an oversized frame from an unknown session still names its session and event', async (t) => {
+  const { sock, logs } = await openServer(t);
+  const frame = oversizedCliFrame({ session_id: 'sess-unknown', hook_event_name: 'PreToolUse' });
+
+  await sendChunks(sock, [frame]);
+
+  const [entry] = logs.filter((l) => l.kind === 'hook-frame-rejected');
+  assert.equal(entry.agentId, undefined, 'agent_id past the limit is not read');
+  assert.equal(entry.sessionId, 'sess-unknown');
+  assert.equal(entry.event, 'PreToolUse');
 });
