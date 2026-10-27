@@ -205,6 +205,24 @@ export function activityEvidenceAt(ev: ActivityEvidence): number {
   return Math.max(worked, span);
 }
 
+/** A seat's last activity for fleet.json and the LIVE ROSTER (AEON-2675).
+ *  Telemetry usage is Claude Code only, so a working Codex or OpenCode seat read
+ *  "no activity yet" with 0 tokens and was taken for dead and re-paged. A turn
+ *  hook (every shimmed engine sends one) is the same evidence the stall rule
+ *  already credits; the later of the two wins, and the source is named so a
+ *  reader can tell a hook-only clock from a telemetry one. */
+export function fleetActivity(usageTs: number | null | undefined, turnHookAt: number, now: number):
+  { lastActiveSecAgo: number | null; lastActiveSource: 'telemetry' | 'hooks' | null } {
+  const usageAt = typeof usageTs === 'number' && Number.isFinite(usageTs) && usageTs > 0 ? usageTs : 0;
+  const hookAt = Number.isFinite(turnHookAt) && turnHookAt > 0 ? turnHookAt : 0;
+  const at = Math.max(usageAt, hookAt);
+  if (at <= 0) return { lastActiveSecAgo: null, lastActiveSource: null };
+  return {
+    lastActiveSecAgo: Math.max(0, Math.round((now - at) / 1000)),
+    lastActiveSource: usageAt >= hookAt ? 'telemetry' : 'hooks'
+  };
+}
+
 export class WorkerWakeWatchdog {
   /** ptyId → spawn timestamp (boot grace). */
   private spawnedAt = new Map<string, number>();

@@ -67,7 +67,7 @@ import { validateBaseUrl, buildAuthHeaders, resolveUpstreamUrl, secretRefFor, IN
 import { RosterStore } from './roster';
 import { buildWorkerLaunch, WORKER_COMPLETION_NOTE } from './workerLaunch';
 import { ControlRegistry } from './control';
-import { CONTROL_EVENT_PENDING_NUDGE, WorkerWakeWatchdog, WORKER_WAKE_REPORT_MS, activityEvidenceAt, type WorkerWakeFacts } from './workerWake';
+import { CONTROL_EVENT_PENDING_NUDGE, WorkerWakeWatchdog, WORKER_WAKE_REPORT_MS, activityEvidenceAt, fleetActivity, type WorkerWakeFacts } from './workerWake';
 import { inboxNudgeText } from '../shared/hiveNudge';
 import { PTY_SUBMIT_ENTER_DELAY_MS, ptySubmitPayload } from '../shared/ptySubmit';
 import { resolveGodName } from '../shared/godIdentity';
@@ -1328,7 +1328,7 @@ function writeFleetSnapshot(): void {
           usd: lifetime === null ? sessionUsd : Number(lifetime.toFixed(4)),
           sessionUsd,
           lastTool: spans.length ? spans[spans.length - 1].tool : null,
-          lastActiveSecAgo: u ? Math.round((now - u.ts) / 1000) : null,
+          ...fleetActivity(u?.ts, workerWake.turnHookAt(id), now),
           inboxBacklog: hive.inboxBacklog(id),
           onHold: !!a.onHold
         };
@@ -3994,7 +3994,7 @@ ipcMain.handle('hive:agentDirectory', () => {
       tokens,
       usd: u ? Number(u.usd.toFixed(4)) : 0,
       lastTool: spans.length ? spans[spans.length - 1].tool : null,
-      lastActiveSecAgo: u ? Math.round((now - u.ts) / 1000) : null,
+      ...fleetActivity(u?.ts, workerWake.turnHookAt(id), now),
       contextTokens: ctx?.tokens ?? null,
       contextLimit: ctx?.limit ?? null,
       contextPct: ctx && ctx.limit > 0 ? Math.round((ctx.tokens / ctx.limit) * 100) : null
