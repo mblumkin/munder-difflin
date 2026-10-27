@@ -14,7 +14,12 @@ const { CircuitBreaker } = loadTs('src/main/breaker.ts');
 async function installedPiBridge(t) {
   const hiveHome = fs.mkdtempSync(path.join(os.tmpdir(), 'md-pi-bridge-hive-'));
   const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'md-pi-bridge-user-'));
-  t.after(() => fs.rmSync(hiveHome, { recursive: true, force: true }));
+  let hive = null;
+  // The hive commits in the background; removing its folder before that commit ends races it (ENOTEMPTY).
+  t.after(async () => {
+    if (hive) await hive.flushGit();
+    fs.rmSync(hiveHome, { recursive: true, force: true });
+  });
   t.after(() => fs.rmSync(fakeHome, { recursive: true, force: true }));
 
   const realHome = process.env.HOME;
@@ -22,7 +27,7 @@ async function installedPiBridge(t) {
   process.env.HOME = fakeHome;
   process.env.USERPROFILE = fakeHome;
   try {
-    const hive = new HiveManager(() => hiveHome);
+    hive = new HiveManager(() => hiveHome);
     const injection = await hive.ensureAgent({
       id: 'pi-bridge-test',
       name: 'Pi Bridge Test',
