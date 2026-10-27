@@ -1,4 +1,4 @@
+- **Mail sent to a busy worker reaches it when its turn ends.**
+- **The roster shows a working Codex or OpenCode seat as active.**
+- **A status change made in the app passes the hive's commit check.**
 - **Unattended agents keep the usage snapshot fresh.**
-- **New hives run the Claude 5.x models, and a model you saved is kept.**
-- **An agent that checks out an origin branch lands on it, with no phantom changes.**
-- **Messages from one agent arrive in the order it sent them.**

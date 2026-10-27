@@ -6,6 +6,28 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.5.25] - 2026-10-27 (local-only, not a public release)
+
+### Fixed
+
+- A hive message that arrives while a worker is mid-turn now reaches it as a turn once that turn
+  ends. The inbox nudge was counted as delivered as soon as its Enter key was written, so a nudge
+  the busy CLI never submitted stayed in the input box, and the worker sat on its mail until
+  someone woke it by hand (58 minutes in one case). A nudge now counts only when the worker's
+  CLI answers it with a prompt within 10 seconds; otherwise it is typed again after the
+  cooldown. Workers whose engine sends no hook events keep the old behavior (AEON-2660).
+- `log.jsonl` now records why a worker with waiting mail is held, each nudge that got no answer,
+  and which agent and session sent a hook frame too large to read (AEON-2660).
+- The live roster no longer shows a working Codex or OpenCode seat as having no activity. Its
+  last-active time came only from Claude telemetry, so any other engine read "no activity yet"
+  and looked dead to the coordinator. It now also counts the seat's turn hooks and marks that
+  clock "(hooks)". A placeholder role such as "a fresh harness" now reads as "agent"
+  (AEON-2675).
+- Changing a card's status in the app (the task's status menu, or the voice assistant's update) now
+  writes a stamped note ending in `[status: OLD -> NEW]` in the same save. Before, the hive's
+  status-trace check refused the next `tasks.json` commit until someone added the note by hand
+  (AEON-2694).
+
 ## [0.5.24] - 2026-10-26 (local-only, not a public release)
 
 ### Fixed

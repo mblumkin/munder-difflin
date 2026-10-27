@@ -41,7 +41,7 @@ import {
 } from '../shared/agentProvider';
 import { MCP_CATALOG } from '../shared/mcpCatalog';
 import { selectBroadcastTargets } from '../shared/broadcast';
-import { preferredAgentRole } from '../shared/agentRole';
+import { isDurableRole, preferredAgentRole } from '../shared/agentRole';
 import { mergeTaskLedger } from '../shared/taskLedger';
 import { expandTilde } from './fs';
 import { resolveGodName } from '../shared/godIdentity';
@@ -143,6 +143,8 @@ export interface HiveTask {
    *  once and never persisted), so a GET status lookup can match by hashing the
    *  presented token. Read-only capability: it never widens routing or exposure. */
   webhook?: { tokenHash: string };
+  /** Stamped history lines; a status change ends its line in `[status: OLD -> NEW]`. */
+  notes?: string[];
 }
 
 export interface AgentMeta {
@@ -2069,6 +2071,18 @@ export class HiveManager {
     if (index < 0) return false;
     const next = tasks.slice();
     next[index] = { ...tasks[index], ...patch, id };
+    const before = tasks[index].status;
+    if (patch.status !== undefined && patch.status !== before) {
+      // The hive's check-status-trace hook refuses a tasks.json commit whose status flip
+      // has no new final note ending in this exact marker; Python prints a missing
+      // status as None.
+      const ts = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
+      const note = `${ts} status set in Munder Difflin [status: ${before ?? 'None'} -> ${patch.status}]`;
+      const notes = next[index].notes;
+      // A non-array notes field is the god's hand edit; leave it for a human, not overwrite it.
+      if (notes === undefined) next[index].notes = [note];
+      else if (Array.isArray(notes)) next[index].notes = [...notes, note];
+    }
     this.writeTasks(next);
     return true;
   }
@@ -2732,7 +2746,7 @@ export class HiveManager {
         agents?: Array<{
           id: string; name?: string; role?: string; isGod?: boolean;
           breaker?: string; tokens?: number; usd?: number;
-          lastTool?: string | null; lastActiveSecAgo?: number | null; inboxBacklog?: number;
+          lastTool?: string | null; lastActiveSecAgo?: number | null; lastActiveSource?: string | null; inboxBacklog?: number;
           onHold?: boolean;
         }>;
       };
@@ -2752,8 +2766,12 @@ export class HiveManager {
       let anyCtx = false;
       let anyHold = false;
       const rows = shown.map((a) => {
-        const bits = [a.role ?? 'agent',
-          typeof a.lastActiveSecAgo === 'number' ? `active ${ago(a.lastActiveSecAgo)}` : 'no activity yet'];
+        // A placeholder caption ("a fresh harness") is not a job: it read as a brand-new
+        // seat for one that had worked for weeks (AEON-2675).
+        const bits = [isDurableRole(a.role) ? a.role!.trim() : (a.isGod ? 'orchestrator' : 'agent'),
+          typeof a.lastActiveSecAgo === 'number'
+            ? `active ${ago(a.lastActiveSecAgo)}${a.lastActiveSource === 'hooks' ? ' (hooks)' : ''}`
+            : 'no activity yet'];
         if (a.tokens) bits.push(`${Math.round(a.tokens / 1000)}k tok`);
         if (a.usd) bits.push(`$${a.usd.toFixed(2)}`);
         if (a.inboxBacklog) bits.push(`inbox ${a.inboxBacklog}`);

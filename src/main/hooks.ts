@@ -121,6 +121,8 @@ export class HookServer {
    *  Lets the harness read per-agent telemetry (e.g. current context size)
    *  even when several agents share one cwd. */
   private transcriptPaths = new Map<string, string>();
+  /** session_id → agentId, so a frame too large to parse can still be attributed. */
+  private sessionAgents = new Map<string, string>();
   /** agentId → the latest context-window accounting from the statusLine shim
    *  (current tokens + the REAL window size — 200k vs 1M, which nothing else
    *  exposes). The renderer already gets this pushed live on `hive:contextUpdate`;
@@ -283,6 +285,7 @@ export class HookServer {
         reason: 'frame-too-large',
         bytes,
         limit: MAX_HOOK_FRAME_BYTES,
+        ...this.oversizedFrameSender(pending),
       });
       conn.destroy();
     };
@@ -370,6 +373,29 @@ export class HookServer {
   }
 
   /** The transcript file of an agent's CURRENT session, if any hook has fired. */
+  /** Who sent a frame too large to parse (AEON-2660: 287 rejections named no
+   *  one). The shim appends agent_id AFTER the CLI's own fields, so behind a
+   *  large tool_response it is past the limit; session_id and hook_event_name
+   *  lead the CLI payload, and the session maps back to the agent that last
+   *  sent a frame for it. Only the leading bytes are scanned. */
+  private oversizedFrameSender(frame: Buffer): { agentId?: string; sessionId?: string; event?: string; tool?: string } {
+    const head = frame.subarray(0, 8192).toString('utf8');
+    const field = (name: string): string | undefined => {
+      const m = head.match(new RegExp(`"${name}"\\s*:\\s*"([^"\\\\]{1,200})"`));
+      return m ? m[1] : undefined;
+    };
+    const sessionId = field('session_id');
+    const agentId = field('agent_id') ?? (sessionId ? this.sessionAgents.get(sessionId) : undefined);
+    const out: { agentId?: string; sessionId?: string; event?: string; tool?: string } = {};
+    if (agentId) out.agentId = agentId;
+    if (sessionId) out.sessionId = sessionId;
+    const event = field('hook_event_name');
+    if (event) out.event = event;
+    const tool = field('tool_name');
+    if (tool) out.tool = tool;
+    return out;
+  }
+
   transcriptPath(agentId: string): string | undefined {
     return this.transcriptPaths.get(agentId);
   }
@@ -428,7 +454,10 @@ export class HookServer {
 
     // Capture the Claude Code session id for idempotent --resume + cost dedup
     // (Lane A #6.6a). Cheap: recordSession writes only when it changes.
-    if (agentId && p.session_id) this.hive.recordSession(agentId, p.session_id);
+    if (agentId && p.session_id) {
+      this.hive.recordSession(agentId, p.session_id);
+      this.sessionAgents.set(p.session_id, agentId);
+    }
 
     // CostSample — synthesized by the proxy-bridge sidecar (qwen) on every
     // response with usage. Persist it to the SAME cost ledger as Claude's OTel
