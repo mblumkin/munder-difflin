@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.5.25] - 2026-10-27 (local-only, not a public release)
+
 ### Fixed
 
 - A hive message that arrives while a worker is mid-turn now reaches it as a turn once that turn
@@ -21,6 +23,10 @@ All notable changes to this project are documented here. The format is based on
   and looked dead to the coordinator. It now also counts the seat's turn hooks and marks that
   clock "(hooks)". A placeholder role such as "a fresh harness" now reads as "agent"
   (AEON-2675).
+- Changing a card's status in the app (the task's status menu, or the voice assistant's update) now
+  writes a stamped note ending in `[status: OLD -> NEW]` in the same save. Before, the hive's
+  status-trace check refused the next `tasks.json` commit until someone added the note by hand
+  (AEON-2694).
 
 ## [0.5.24] - 2026-10-26 (local-only, not a public release)
 
