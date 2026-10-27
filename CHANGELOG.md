@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- The live roster no longer shows a working Codex or OpenCode seat as having no activity. Its
+  last-active time came only from Claude telemetry, so any other engine read "no activity yet"
+  and looked dead to the coordinator. It now also counts the seat's turn hooks and marks that
+  clock "(hooks)". A placeholder role such as "a fresh harness" now reads as "agent"
+  (AEON-2675).
+
 ## [0.5.24] - 2026-10-26 (local-only, not a public release)
 
 ### Fixed

@@ -41,7 +41,7 @@ import {
 } from '../shared/agentProvider';
 import { MCP_CATALOG } from '../shared/mcpCatalog';
 import { selectBroadcastTargets } from '../shared/broadcast';
-import { preferredAgentRole } from '../shared/agentRole';
+import { isDurableRole, preferredAgentRole } from '../shared/agentRole';
 import { mergeTaskLedger } from '../shared/taskLedger';
 import { expandTilde } from './fs';
 import { resolveGodName } from '../shared/godIdentity';
@@ -2732,7 +2732,7 @@ export class HiveManager {
         agents?: Array<{
           id: string; name?: string; role?: string; isGod?: boolean;
           breaker?: string; tokens?: number; usd?: number;
-          lastTool?: string | null; lastActiveSecAgo?: number | null; inboxBacklog?: number;
+          lastTool?: string | null; lastActiveSecAgo?: number | null; lastActiveSource?: string | null; inboxBacklog?: number;
           onHold?: boolean;
         }>;
       };
@@ -2752,8 +2752,12 @@ export class HiveManager {
       let anyCtx = false;
       let anyHold = false;
       const rows = shown.map((a) => {
-        const bits = [a.role ?? 'agent',
-          typeof a.lastActiveSecAgo === 'number' ? `active ${ago(a.lastActiveSecAgo)}` : 'no activity yet'];
+        // A placeholder caption ("a fresh harness") is not a job: it read as a brand-new
+        // seat for one that had worked for weeks (AEON-2675).
+        const bits = [isDurableRole(a.role) ? a.role!.trim() : (a.isGod ? 'orchestrator' : 'agent'),
+          typeof a.lastActiveSecAgo === 'number'
+            ? `active ${ago(a.lastActiveSecAgo)}${a.lastActiveSource === 'hooks' ? ' (hooks)' : ''}`
+            : 'no activity yet'];
         if (a.tokens) bits.push(`${Math.round(a.tokens / 1000)}k tok`);
         if (a.usd) bits.push(`$${a.usd.toFixed(2)}`);
         if (a.inboxBacklog) bits.push(`inbox ${a.inboxBacklog}`);
