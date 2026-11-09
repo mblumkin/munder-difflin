@@ -2963,8 +2963,14 @@ export class HiveManager {
   }
   private atomicWriteJson(p: string, data: unknown): void {
     const tmp = `${p}.tmp-${shortRand()}`;
-    writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf8');
-    renameSync(tmp, p);
+    // Same-volume rename protects against process interruption; this does not promise power-loss durability.
+    try {
+      writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf8');
+      renameSync(tmp, p);
+    } catch (error) {
+      try { unlinkSync(tmp); } catch { /* Keep the original write/rename error. */ }
+      throw error;
+    }
   }
 
   // — git (single committer, retry + stale-lock recovery) —

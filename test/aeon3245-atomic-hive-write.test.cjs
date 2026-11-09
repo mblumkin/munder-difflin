@@ -50,3 +50,32 @@ test('writeJson leaves a complete old or new target when an in-place write is in
     'a successful atomic replacement must leave no temporary file behind'
   );
 });
+
+test('atomicWriteJson removes a partial temporary file when its write fails', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'md-atomic-hive-temp-'));
+  const target = path.join(dir, 'registry.json');
+  const oldText = '{\n  "old": true\n}';
+  fs.writeFileSync(target, oldText, 'utf8');
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  const writeFileSync = fs.writeFileSync;
+  let planted = false;
+  t.mock.method(fs, 'writeFileSync', (file, ...args) => {
+    if (String(file).startsWith(`${target}.tmp-`)) {
+      planted = true;
+      writeFileSync(file, '{\n  "partial":', 'utf8');
+      throw new Error('planted interruption during temporary write');
+    }
+    return writeFileSync(file, ...args);
+  });
+
+  const hive = new HiveManager(() => dir);
+  assert.throws(() => hive.writeJson(target, { agents: { pam: {} } }), /planted interruption/);
+  assert.equal(planted, true, 'the test must interrupt the temporary-file write');
+  assert.equal(fs.readFileSync(target, 'utf8'), oldText, 'a failed replacement must preserve the old target');
+  assert.deepEqual(
+    fs.readdirSync(dir).filter((name) => name.startsWith('registry.json.tmp-')),
+    [],
+    'a failed temporary write must not leave a partial file behind'
+  );
+});
