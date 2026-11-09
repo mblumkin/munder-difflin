@@ -1,4 +1,4 @@
-- **Mail sent to a busy worker reaches it when its turn ends.**
-- **The roster shows a working Codex or OpenCode seat as active.**
-- **A status change made in the app passes the hive's commit check.**
-- **Unattended agents keep the usage snapshot fresh.**
+- **Backlog cards sit in their own collapsed lane, not in Todo.**
+- **Cards marked ready get a Ready lane, and cancelled cards leave the board.**
+- **A crash in the middle of a save can no longer empty the roster or the task board.**
+- **GPT-6.1 Terra is in the Codex model picker.**

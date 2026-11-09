@@ -6,6 +6,27 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.5.26] - 2026-11-09 (local-only, not a public release)
+
+### Added
+
+- GPT-6.1 Terra is in the Codex model picker (upstream #796) (AEON-3245).
+
+### Fixed
+
+- The task board no longer shows backlog and cancelled cards as Todo. On the 0.5.25 board, 46 of
+  its 96 Todo cards were backlog or cancelled. Backlog cards now sit in a Backlog lane after Done,
+  collapsed until you open it, with its count always shown (AEON-3236). Cancelled cards are left
+  off the board, and cards marked ready get their own Ready lane (AEON-3248). A status the app does
+  not know still shows under Todo.
+- The hive's JSON files (the roster, the task board and the rest) are written to a temporary file
+  and renamed into place. A crash or force quit in the middle of a save could leave a truncated
+  file, which the app then read as empty, so the roster or the task board vanished. A save that
+  fails now removes its temporary file and leaves the old file as it was (upstream #529)
+  (AEON-3245).
+- internal: the Pi bridge test waits for the hive's queued commit before removing its temporary
+  hive, so it no longer fails under load with ENOTEMPTY (AEON-2707).
+
 ## [0.5.25] - 2026-10-27 (local-only, not a public release)
 
 ### Fixed
