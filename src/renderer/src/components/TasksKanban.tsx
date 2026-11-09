@@ -58,6 +58,7 @@ type Status = HiveTaskStatus;
 const COLUMNS: { key: Status; labelKey: string; accent: string }[] = [
   { key: 'todo',    labelKey: 'kanban.colTodo',    accent: 'var(--cth-sky)' },
   { key: 'doing',   labelKey: 'kanban.colDoing',   accent: 'var(--cth-lemon)' },
+  { key: 'ready',   labelKey: 'kanban.colReady',   accent: 'var(--cth-mint)' },
   { key: 'blocked', labelKey: 'kanban.colBlocked', accent: 'var(--cth-coral)' },
   { key: 'done',    labelKey: 'kanban.colDone',    accent: 'var(--cth-mint)' },
   { key: 'backlog', labelKey: 'kanban.colBacklog', accent: 'var(--cth-lilac)' }
@@ -85,6 +86,8 @@ export function parseTasks(raw: unknown): HiveTask[] {
     : [];
   return list
     .filter((t): t is Record<string, unknown> => !!t && typeof t === 'object')
+    // Cancelled tasks are archived, not shown in any kanban lane.
+    .filter((t) => normalizeHiveTaskStatus(t.status) !== 'cancelled')
     .map((t, i) => ({
       id: typeof t.id === 'string' && t.id
         ? t.id

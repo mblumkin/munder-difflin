@@ -12,10 +12,11 @@ const root = path.resolve(__dirname, '..');
 const source = (name) => fs.readFileSync(path.join(root, name), 'utf8');
 const { HIVE_TASK_STATUSES, normalizeHiveTaskStatus } = loadTs('src/shared/taskStatus.ts');
 
-test('backlog is a normalized first-class status while unknown values retain the Todo fallback', () => {
-  assert.deepEqual(HIVE_TASK_STATUSES, ['todo', 'doing', 'blocked', 'done', 'backlog']);
+test('ready is a normalized first-class status while unknown values retain the Todo fallback', () => {
+  assert.deepEqual(HIVE_TASK_STATUSES, ['todo', 'doing', 'ready', 'blocked', 'done', 'backlog', 'cancelled']);
+  assert.equal(normalizeHiveTaskStatus('ready'), 'ready');
   assert.equal(normalizeHiveTaskStatus('backlog'), 'backlog');
-  assert.equal(normalizeHiveTaskStatus('cancelled'), 'todo');
+  assert.equal(normalizeHiveTaskStatus('cancelled'), 'cancelled');
   assert.equal(normalizeHiveTaskStatus(null), 'todo');
 });
 
@@ -87,7 +88,10 @@ function renderKanbanWithTasks(rawTasks) {
     const collapsedMarkup = ReactDOMServer.renderToStaticMarkup(collapsedElement);
     const columns = collapsed.children[1].children;
     const todo = columns[0];
-    const backlog = columns[4];
+    const ready = columns[2];
+    const lane = (status) => columns.find((column) => renderedText(column.children[0]).startsWith(`kanban.col${status}`));
+    const backlog = lane('Backlog');
+    const cancelled = lane('Cancelled');
     const toggle = backlog.children[0];
     toggle.props.onClick();
     hookIndex = 0;
@@ -95,8 +99,8 @@ function renderKanbanWithTasks(rawTasks) {
     const expanded = materialize(expandedElement);
     const expandedMarkup = ReactDOMServer.renderToStaticMarkup(expandedElement);
     return {
-      collapsed: { todo, backlog, toggle, markup: collapsedMarkup },
-      expanded: { backlog: expanded.children[1].children[4], markup: expandedMarkup }
+      collapsed: { todo, ready, backlog, cancelled, toggle, markup: collapsedMarkup },
+      expanded: { backlog: laneFrom(expanded, 'Backlog'), markup: expandedMarkup }
     };
   } finally {
     React.useState = originals.useState;
@@ -110,19 +114,29 @@ function renderKanbanWithTasks(rawTasks) {
   }
 }
 
+function laneFrom(tree, status) {
+  return tree.children[1].children.find((column) => renderedText(column.children[0]).startsWith(`kanban.col${status}`));
+}
+
 function renderedText(node) {
   if (Array.isArray(node)) return node.map(renderedText).join('');
   if (typeof node === 'string' || typeof node === 'number') return String(node);
   return node && typeof node === 'object' ? renderedText(node.children) : '';
 }
 
-test('TasksKanban renders Backlog collapsed, expands its card, and falls unknown statuses to Todo', () => {
+test('TasksKanban renders Ready separately, filters Cancelled, and falls unknown statuses to Todo', () => {
   const tree = renderKanbanWithTasks({ tasks: [
+    { id: 'AEON-READY', title: 'Ready card', status: 'ready' },
+    { id: 'AEON-CANCELLED', title: 'Cancelled card', status: 'cancelled' },
     { id: 'AEON-BACKLOG', title: 'Backlog card', status: 'backlog' },
     { id: 'AEON-TODO', title: 'Todo card', status: 'todo' },
-    { id: 'AEON-UNKNOWN', title: 'Unknown status card', status: 'cancelled' }
+    { id: 'AEON-UNKNOWN', title: 'Unknown status card', status: 'mystery' }
   ] });
-  const { todo, backlog, toggle } = tree.collapsed;
+  const { todo, backlog, cancelled, toggle } = tree.collapsed;
+  assert.match(renderedText(tree.collapsed.ready.children[0]), /kanban\.colReady/);
+  assert.match(renderedText(tree.collapsed.ready.children[1]), /Ready card/);
+  assert.doesNotMatch(renderedText(todo.children[1]), /Ready card/);
+  assert.equal(cancelled, undefined, 'there is no Cancelled lane');
   assert.equal(toggle.type, 'button');
   assert.equal(toggle.props['aria-expanded'], false, 'Backlog starts collapsed');
   assert.match(renderedText(toggle), /1$/, 'the collapsed Backlog header shows its card count');
@@ -131,6 +145,7 @@ test('TasksKanban renders Backlog collapsed, expands its card, and falls unknown
   assert.match(tree.collapsed.markup, /id="kanban-backlog-cards" hidden=""/);
   assert.match(renderedText(todo.children[1]), /Todo card/);
   assert.match(renderedText(todo.children[1]), /Unknown status card/, 'unknown status cards render in Todo');
+  assert.doesNotMatch(tree.collapsed.markup, /Cancelled card/, 'cancelled cards are filtered from the board');
 
   const expandedBacklog = tree.expanded.backlog;
   assert.equal(expandedBacklog.children[0].props['aria-expanded'], true, 'the toggle expands Backlog');
@@ -153,8 +168,46 @@ test('task schemas and generated protocol consume the shared status list', () =>
   ]) {
     assert.match(source(file), /taskStatus/, `${file} must use the shared task status definition`);
   }
-  assert.match(source('src/main/hive.ts'), /todo\/doing\/blocked\/done\/backlog/);
+  const guardrails = source('src/main/hive.ts').match(/const guardrailsLine = '([^']*)'/)?.[1];
+  assert.match(guardrails || '', /todo\/doing\/ready\/blocked\/done\/backlog/);
+  assert.match(source('src/renderer/src/realtime/tools.ts'), /ready.*in progress/s);
+  assert.match(source('src/renderer/src/realtime/tools.ts'), /by\('ready'\)/);
+  assert.match(source('src/renderer/src/realtime/tools.ts'), /\$\{ready\.length\} ready/);
   for (const locale of ['en', 'ar', 'zh-CN']) {
-    assert.match(source(`src/renderer/src/i18n/locales/${locale}.json`), /"colBacklog"/);
+    assert.match(source(`src/renderer/src/i18n/locales/${locale}.json`), /"colReady"/);
+  }
+});
+
+test('realtime schema recognizes Cancelled while summaries count Ready only', async () => {
+  const originalLoad = Module._load;
+  const originalWindow = global.window;
+  global.window = { cth: {
+    hiveAgentDirectory: async () => ({ agents: [] }),
+    hiveTasks: async () => ({ tasks: [
+      { id: 'AEON-DOING', title: 'Building', status: 'doing' },
+      { id: 'AEON-READY', title: 'Signed off', status: 'ready' },
+      { id: 'AEON-CANCELLED', title: 'Closed', status: 'cancelled' }
+    ] })
+  } };
+  Module._load = function (request, parent, isMain) {
+    if (request === '@openai/agents-realtime') return { tool: (definition) => definition };
+    return originalLoad.call(this, request, parent, isMain);
+  };
+  try {
+    const { realtimeReadTools, realtimeSessionSummary } = loadTs('src/renderer/src/realtime/tools.ts');
+    const getTasks = realtimeReadTools().find((entry) => entry.name === 'get_tasks');
+    assert.ok(getTasks);
+    assert.deepEqual(getTasks.parameters.properties.status.enum, HIVE_TASK_STATUSES);
+    assert.ok(getTasks.parameters.properties.status.enum.includes('cancelled'));
+    const toolSummary = await getTasks.execute({});
+    assert.match(toolSummary, /1 in progress, 1 ready/);
+    assert.doesNotMatch(toolSummary, /cancelled/);
+    const sessionSummary = await realtimeSessionSummary();
+    assert.match(sessionSummary, /1 in progress, 1 ready, 0 blocked/);
+    assert.doesNotMatch(sessionSummary, /cancelled/);
+  } finally {
+    Module._load = originalLoad;
+    if (originalWindow === undefined) delete global.window;
+    else global.window = originalWindow;
   }
 });

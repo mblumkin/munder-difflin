@@ -1282,6 +1282,7 @@
     "newWorkHint": "有新工作？派发给 {{godName}}（监控标签页）",
     "colTodo": "待办",
     "colDoing": "进行中",
+    "colReady": "就绪",
     "colBlocked": "已阻塞",
     "colDone": "已完成",
     "colBacklog": "积压",
