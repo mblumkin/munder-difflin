@@ -23,6 +23,7 @@
  * lifecycle in session.ts is tool-agnostic, so it survives the swap unchanged.
  */
 import { tool } from '@openai/agents-realtime';
+import { HIVE_TASK_STATUSES } from '@shared/taskStatus';
 
 // ─── spoken-prose formatting helpers ────────────────────────────────────────
 
@@ -149,13 +150,13 @@ export function realtimeReadTools(): ReturnType<typeof tool>[] {
     tool({
       name: 'get_tasks',
       description:
-        'The current task board: how many tasks are todo, in progress, blocked, and done, plus the titles and owners of the in-progress and blocked ones. Optionally filter by a single status. Call this when the user asks what the team is working on, what is blocked, or about progress.',
+        'The current task board: how many tasks are todo, in progress, blocked, done, and in backlog, plus the titles and owners of the in-progress and blocked ones. Optionally filter by a single status. Call this when the user asks what the team is working on, what is blocked, or about progress.',
       parameters: {
         type: 'object',
         properties: {
           status: {
             type: 'string',
-            enum: ['todo', 'doing', 'blocked', 'done'],
+            enum: [...HIVE_TASK_STATUSES],
             description: 'Optional. Restrict the answer to one status.'
           }
         },
@@ -174,7 +175,7 @@ export function realtimeReadTools(): ReturnType<typeof tool>[] {
           const counts = `${plural(by('todo').length, 'to do')}, ${by('doing').length} in progress, ${plural(
             by('blocked').length,
             'blocked'
-          )}, and ${by('done').length} done`;
+          )}, ${by('done').length} done, and ${by('backlog').length} in backlog`;
           const describe = (t: Record<string, unknown>): string => {
             const who = str(t.assignee);
             return `"${clip(str(t.title) || str(t.id) || 'untitled', 90)}"${who ? ` (${who})` : ''}`;

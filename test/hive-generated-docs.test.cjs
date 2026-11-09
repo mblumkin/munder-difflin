@@ -122,3 +122,9 @@ test('ensureHive restores only the missing generated hive doc', (t) => {
   assertGenerated(root, [missing]);
   assert.equal(readGeneratedDoc(root, preserved.filename), preserved.sentinel);
 });
+
+test('generated protocol names backlog as a task status', (t) => {
+  const { hive, root } = floor(t);
+  hive.refreshGeneratedDocs();
+  assert.match(readGeneratedDoc(root, 'PROTOCOL.md'), /kanban[^\n]*backlog/);
+});
