@@ -7,6 +7,7 @@ import { Icon } from './Icon';
 import { useStore } from '@/store/store';
 import { MarkdownPreview } from '@/markdown/MarkdownPreview';
 import { useRtl } from '@/i18n/useDirection';
+import { normalizeHiveTaskStatus, type HiveTaskStatus } from '@shared/taskStatus';
 
 /** A card on the task kanban. Mirrors HiveTask in the main/preload process —
  *  re-declared locally so the renderer doesn't reach into the preload package
@@ -27,7 +28,7 @@ export interface HiveTask {
   title: string;
   description?: string;
   assignee?: string;
-  status: 'todo' | 'doing' | 'blocked' | 'done';
+  status: HiveTaskStatus;
   dependsOn: string[];
   priority: number;
   createdAt: string;
@@ -52,13 +53,15 @@ export function waitsOnHuman(t: HiveTask): boolean {
   return t.status === 'blocked' && !!openQuestion(t);
 }
 
-type Status = HiveTask['status'];
+type Status = HiveTaskStatus;
 
 const COLUMNS: { key: Status; labelKey: string; accent: string }[] = [
   { key: 'todo',    labelKey: 'kanban.colTodo',    accent: 'var(--cth-sky)' },
   { key: 'doing',   labelKey: 'kanban.colDoing',   accent: 'var(--cth-lemon)' },
+  { key: 'ready',   labelKey: 'kanban.colReady',   accent: 'var(--cth-mint)' },
   { key: 'blocked', labelKey: 'kanban.colBlocked', accent: 'var(--cth-coral)' },
-  { key: 'done',    labelKey: 'kanban.colDone',    accent: 'var(--cth-mint)' }
+  { key: 'done',    labelKey: 'kanban.colDone',    accent: 'var(--cth-mint)' },
+  { key: 'backlog', labelKey: 'kanban.colBacklog', accent: 'var(--cth-lilac)' }
 ];
 
 const POLL_MS = 5000;
@@ -83,6 +86,8 @@ export function parseTasks(raw: unknown): HiveTask[] {
     : [];
   return list
     .filter((t): t is Record<string, unknown> => !!t && typeof t === 'object')
+    // Cancelled tasks are archived, not shown in any kanban lane.
+    .filter((t) => normalizeHiveTaskStatus(t.status) !== 'cancelled')
     .map((t, i) => ({
       id: typeof t.id === 'string' && t.id
         ? t.id
@@ -90,8 +95,7 @@ export function parseTasks(raw: unknown): HiveTask[] {
       title: typeof t.title === 'string' ? t.title : '(untitled)',
       description: typeof t.description === 'string' ? t.description : undefined,
       assignee: typeof t.assignee === 'string' ? t.assignee : undefined,
-      status: (['todo', 'doing', 'blocked', 'done'] as const).includes(t.status as Status)
-        ? (t.status as Status) : 'todo',
+      status: normalizeHiveTaskStatus(t.status),
       dependsOn: Array.isArray(t.dependsOn) ? t.dependsOn.filter((d): d is string => typeof d === 'string') : [],
       priority: typeof t.priority === 'number' ? t.priority : 3,
       createdAt: typeof t.createdAt === 'string' ? t.createdAt : new Date().toISOString(),
@@ -121,6 +125,7 @@ export function TasksKanban() {
   const { t } = useTranslation();
   const agents = useStore((s) => s.agents);
   const [tasks, setTasks] = useState<HiveTask[]>([]);
+  const [backlogExpanded, setBacklogExpanded] = useState(false);
   // Detail view: cards show just the title — clicking one opens the full
   // breakdown as an APP-WIDE overlay over the office floor (see
   // TaskDetailOverlay) — the content grows (contracts, deps, human Q&A), so it
@@ -184,20 +189,40 @@ export function TasksKanban() {
       }}>
         {COLUMNS.map((col) => {
           const cards = tasks.filter((t) => t.status === col.key);
+          const headerStyle: React.CSSProperties = {
+            display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px 4px',
+            background: col.accent, boxShadow: 'inset 0 -1px 0 var(--cth-ink-900)',
+            fontFamily: 'var(--cth-font-display)', fontSize: 9, color: 'var(--cth-ink-900)'
+          };
+          const backlog = col.key === 'backlog';
           return (
             <div key={col.key} style={{
               flex: '1 1 0', minWidth: 170, display: 'flex', flexDirection: 'column',
               background: 'var(--cth-cream-100)', boxShadow: 'inset 0 0 0 1px var(--cth-ink-300)'
             }}>
-              <div style={{
-                display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px 4px',
-                background: col.accent, boxShadow: 'inset 0 -1px 0 var(--cth-ink-900)',
-                fontFamily: 'var(--cth-font-display)', fontSize: 9, color: 'var(--cth-ink-900)'
-              }}>
-                {t(col.labelKey)}
-                <span style={{ marginLeft: 'auto', fontSize: 11, fontFamily: 'var(--cth-font-ui)' }}>{cards.length}</span>
-              </div>
-              <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 6, display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {backlog ? (
+                <button
+                  type="button"
+                  aria-expanded={backlogExpanded}
+                  aria-controls="kanban-backlog-cards"
+                  onClick={() => setBacklogExpanded((expanded) => !expanded)}
+                  style={{ ...headerStyle, width: '100%', border: 0, textAlign: 'left', cursor: 'pointer' }}
+                >
+                  {t(col.labelKey)}
+                  <span aria-hidden="true">{backlogExpanded ? '▾' : '▸'}</span>
+                  <span style={{ marginLeft: 'auto', fontSize: 11, fontFamily: 'var(--cth-font-ui)' }}>{cards.length}</span>
+                </button>
+              ) : (
+                <div style={headerStyle}>
+                  {t(col.labelKey)}
+                  <span style={{ marginLeft: 'auto', fontSize: 11, fontFamily: 'var(--cth-font-ui)' }}>{cards.length}</span>
+                </div>
+              )}
+              <div
+                id={backlog ? 'kanban-backlog-cards' : undefined}
+                hidden={backlog && !backlogExpanded}
+                style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 6, display: backlog && !backlogExpanded ? 'none' : 'flex', flexDirection: 'column', gap: 6 }}
+              >
                 {cards.length === 0 && (
                   <div style={{ fontSize: 12, color: 'var(--cth-ink-300)', textAlign: 'center', padding: '8px 0' }}>—</div>
                 )}

@@ -40,6 +40,7 @@ import type { ScheduledMission } from './config';
 import { inferAgentProvider } from '../shared/agentProvider';
 import { clearCommandForProvider } from '../shared/providerAutomation';
 import { resolveGodName } from '../shared/godIdentity';
+import { HIVE_TASK_STATUSES } from '../shared/taskStatus';
 
 export const VOICE_ACTOR = 'michael-voice';
 
@@ -446,8 +447,7 @@ function execUpdateTask(deps: RealtimeActionDeps, a: Record<string, unknown>): A
   }
   if (!card) return { ok: false, spoken: `I couldn't find a task matching "${ref}".` };
   const status = str(a.status);
-  const valid = ['todo', 'doing', 'blocked', 'done'];
-  if (status && !valid.includes(status)) return { ok: false, spoken: `"${status}" isn't a valid status.` };
+  if (status && !(HIVE_TASK_STATUSES as readonly string[]).includes(status)) return { ok: false, spoken: `"${status}" isn't a valid status.` };
   const patch: Partial<Omit<HiveTask, 'id'>> = {};
   if (status) patch.status = status as HiveTask['status'];
   if (str(a.result)) patch.result = str(a.result);

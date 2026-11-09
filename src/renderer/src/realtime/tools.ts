@@ -23,6 +23,7 @@
  * lifecycle in session.ts is tool-agnostic, so it survives the swap unchanged.
  */
 import { tool } from '@openai/agents-realtime';
+import { HIVE_TASK_STATUSES } from '@shared/taskStatus';
 
 // ─── spoken-prose formatting helpers ────────────────────────────────────────
 
@@ -149,13 +150,13 @@ export function realtimeReadTools(): ReturnType<typeof tool>[] {
     tool({
       name: 'get_tasks',
       description:
-        'The current task board: how many tasks are todo, in progress, blocked, and done, plus the titles and owners of the in-progress and blocked ones. Optionally filter by a single status. Call this when the user asks what the team is working on, what is blocked, or about progress.',
+        'The current task board: how many tasks are todo, in progress, ready, blocked, done, and in backlog, plus the titles and owners of the in-progress, ready, and blocked ones. Optionally filter by a single status. Call this when the user asks what the team is working on, what is ready, what is blocked, or about progress.',
       parameters: {
         type: 'object',
         properties: {
           status: {
             type: 'string',
-            enum: ['todo', 'doing', 'blocked', 'done'],
+            enum: [...HIVE_TASK_STATUSES],
             description: 'Optional. Restrict the answer to one status.'
           }
         },
@@ -172,9 +173,12 @@ export function realtimeReadTools(): ReturnType<typeof tool>[] {
           const tasks = list.map(obj);
           const by = (s: string): Record<string, unknown>[] => tasks.filter((t) => str(t.status) === s);
           const counts = `${plural(by('todo').length, 'to do')}, ${by('doing').length} in progress, ${plural(
+            by('ready').length,
+            'ready'
+          )}, ${plural(
             by('blocked').length,
             'blocked'
-          )}, and ${by('done').length} done`;
+          )}, ${by('done').length} done, and ${by('backlog').length} in backlog`;
           const describe = (t: Record<string, unknown>): string => {
             const who = str(t.assignee);
             return `"${clip(str(t.title) || str(t.id) || 'untitled', 90)}"${who ? ` (${who})` : ''}`;
@@ -185,9 +189,11 @@ export function realtimeReadTools(): ReturnType<typeof tool>[] {
             return `${plural(sel.length, 'task')} ${filter}: ${sel.slice(0, 12).map(describe).join('; ')}.`;
           }
           const doing = by('doing');
+          const ready = by('ready');
           const blocked = by('blocked');
           const detail = [
             doing.length ? `In progress: ${doing.slice(0, 8).map(describe).join('; ')}.` : '',
+            ready.length ? `Ready: ${ready.slice(0, 8).map(describe).join('; ')}.` : '',
             blocked.length ? `Blocked: ${blocked.slice(0, 8).map(describe).join('; ')}.` : ''
           ]
             .filter(Boolean)
@@ -644,11 +650,14 @@ export async function realtimeSessionSummary(): Promise<string> {
     });
     const list = Array.isArray(obj(tasksRaw).tasks) ? (obj(tasksRaw).tasks as unknown[]).map(obj) : [];
     const doing = list.filter((t) => str(t.status) === 'doing');
+    const ready = list.filter((t) => str(t.status) === 'ready');
     const blocked = list.filter((t) => str(t.status) === 'blocked');
     const taskLine = [
+      `${doing.length} in progress, ${ready.length} ready, ${blocked.length} blocked.`,
       doing.length
         ? `In progress: ${doing.slice(0, 5).map((t) => `"${str(t.title)}"${str(t.assignee) ? ` with ${str(t.assignee)}` : ''}`).join('; ')}.`
         : 'Nothing is in progress on the board.',
+      ready.length ? `Ready: ${ready.slice(0, 4).map((t) => `"${str(t.title)}"`).join('; ')}.` : '',
       blocked.length ? `Blocked: ${blocked.slice(0, 4).map((t) => `"${str(t.title)}"`).join('; ')}.` : ''
     ].filter(Boolean).join(' ');
     return (

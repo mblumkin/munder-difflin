@@ -31,6 +31,7 @@ import { randomBytes, createHash } from 'node:crypto';
 import type { AgentUsageSample } from './usage';
 import { hardKillTree, KILL_GRACE_MS } from './procKill';
 import { COMMAND_GROUPS } from '../shared/claudeCommands';
+import type { HiveTaskStatus } from '../shared/taskStatus';
 import {
   isClaudeProvider,
   isHiveAwareProvider,
@@ -123,7 +124,7 @@ export interface HiveTask {
   title: string;
   description?: string;
   assignee?: string;
-  status: 'todo' | 'doing' | 'blocked' | 'done';
+  status: HiveTaskStatus;
   dependsOn: string[];
   priority: number;
   createdAt: string;
@@ -1650,7 +1651,7 @@ export class HiveManager {
       : meta.isAssistant
       ? `You are ${godNameForPrompt}'s PREP ASSISTANT. You will be handed short, possibly vague instructions (each begins with "ENRICH TASK:"). For each one: (1) figure out which project it concerns and cd into the most relevant repo — you start in ${godNameForPrompt}'s home directory; (2) gather concrete context READ-ONLY (exact file paths, current state, relevant code, conventions, active branch, gotchas) — NEVER modify, create, or delete files; (3) rewrite the instruction into ONE clear, self-contained prompt that ${godNameForPrompt} can execute autonomously, preserving the user's original intent without inventing scope. Then deliver it: write ONE message JSON into your outbox with "to":"god", "act":"request", a short subject, and the finished prompt as the body. Do NOT perform the task yourself — your only output is the improved prompt sent to ${godNameForPrompt}.`
       : 'For anything ambiguous, cross-cutting, or needing sign-off, address a message to "god".';
-    const guardrailsLine = 'Guardrails: a circuit breaker watches the floor — a "Circuit breaker: steer/constrain" message means you are looping or overspending, so STOP repeating, summarize what you tried, and follow it. Be token-frugal (a floor-wide or per-agent token budget can pause you). The shared plan has two parts: board.md (freeform; god is the sole scribe) and tasks.json (structured kanban — todo/doing/blocked/done).';
+    const guardrailsLine = 'Guardrails: a circuit breaker watches the floor — a "Circuit breaker: steer/constrain" message means you are looping or overspending, so STOP repeating, summarize what you tried, and follow it. Be token-frugal (a floor-wide or per-agent token budget can pause you). The shared plan has two parts: board.md (freeform; god is the sole scribe) and tasks.json (structured kanban — todo/doing/ready/blocked/done/backlog).';
     const coreDirectiveLine = 'CORE DIRECTIVE — fix or card everything you find along the way: a defect you notice during any task (code, docs, tooling, process, stale board state, a check narrower than its claim) gets exactly one of two outcomes. FIX it now (small, in scope, your verification covers it) or CARD it: one message to god naming the defect, where you saw it, and the evidence. Walking past it is prohibited. When unsure whether it deserves a card, it does.';
     const slackLine = meta.isGod
       ? 'SLACK REPLIES: When composing a Slack reply (or writing the `result` field of a Slack-origin kanban card), you MUST: (1) directly address what the user asked — never a bare "done"; (2) include the relevant specifics, outcome, and details; (3) format for Slack mrkdwn — open with a short *bold* headline, use bullet points for multiple items, wrap code/paths in `backtick` blocks, keep it concise (no walls of text). When finishing a Slack-origin task, always write a complete, user-facing, well-formatted `result` on the kanban card — the system posts it verbatim to Slack as the done reply.'
@@ -2947,13 +2948,30 @@ export class HiveManager {
   private readJson<T>(p: string, fallback: T): T {
     try { return JSON.parse(readFileSync(p, 'utf8')) as T; } catch { return fallback; }
   }
+  // Both call sites end up here now - writeJson used to write in place
+  // (writeFileSync straight to the target path), which meant a crash or
+  // forced-quit mid-write (very much a real scenario for an app that gets
+  // force-killed) could leave registry.json/tasks.json/etc as truncated or
+  // invalid JSON. readJson's catch-all silently falls back to an EMPTY
+  // structure on any parse failure, so the visible symptom was an agent
+  // roster or task board that just vanished, with no error anywhere. The
+  // temp-file+rename pattern atomicWriteJson already used elsewhere makes
+  // every write all-or-nothing: renameSync is atomic on the same volume, so
+  // readers only ever see the fully-written old file or the fully-written
+  // new one, never a partial one.
   private writeJson(p: string, data: unknown): void {
-    writeFileSync(p, JSON.stringify(data, null, 2), 'utf8');
+    this.atomicWriteJson(p, data);
   }
   private atomicWriteJson(p: string, data: unknown): void {
     const tmp = `${p}.tmp-${shortRand()}`;
-    writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf8');
-    renameSync(tmp, p);
+    // Same-volume rename protects against process interruption; this does not promise power-loss durability.
+    try {
+      writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf8');
+      renameSync(tmp, p);
+    } catch (error) {
+      try { unlinkSync(tmp); } catch { /* Keep the original write/rename error. */ }
+      throw error;
+    }
   }
 
   // — git (single committer, retry + stale-lock recovery) —
@@ -3745,7 +3763,7 @@ The harness fills in \`id\`, \`from\`, \`hops\`, and timestamps.
 ## The work: board.md vs tasks.json
 There are two shared surfaces, both in the hive root:
 - \`board.md\` — the freeform narrative plan. The god agent is its sole scribe; others \`propose\` edits.
-- \`tasks.json\` — the structured task ledger (a kanban: \`todo / doing / blocked / done\`, with title,
+- \`tasks.json\` — the structured task ledger (a kanban: \`todo / doing / ready / blocked / done / backlog\`, with title,
   assignee, priority, deps). Keep the task you're working reflected in its status.
 
 ## Asking the human (the ASK ME card)
