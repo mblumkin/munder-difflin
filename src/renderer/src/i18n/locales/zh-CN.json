@@ -1284,6 +1284,7 @@
     "colDoing": "进行中",
     "colBlocked": "已阻塞",
     "colDone": "已完成",
+    "colBacklog": "积压",
     "openTaskDetails": "打开任务详情",
     "needsYouTitle": "等待你的回答——见「问我」标签页",
     "dismissTitle": "忽略此任务（从看板上移除）",

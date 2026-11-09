@@ -20,6 +20,7 @@
  *   tools: [...realtimeReadTools(), ...realtimeActionTools()]
  */
 import { tool } from '@openai/agents-realtime';
+import { HIVE_TASK_STATUSES } from '@shared/taskStatus';
 
 const obj = (x: unknown): Record<string, unknown> =>
   x && typeof x === 'object' ? (x as Record<string, unknown>) : {};
@@ -131,12 +132,12 @@ export function realtimeActionTools(): ReturnType<typeof tool>[] {
     tool({
       name: 'update_task',
       description:
-        'Change an existing task: its status (todo/doing/blocked/done), result note, or assignee. Soft action — runs immediately.',
+        'Change an existing task: its status (todo/doing/blocked/done/backlog), result note, or assignee. Soft action — runs immediately.',
       parameters: {
         type: 'object',
         properties: {
           taskId: { type: 'string', description: 'Task id or title to update.' },
-          status: { type: 'string', enum: ['todo', 'doing', 'blocked', 'done'], description: 'Optional new status.' },
+          status: { type: 'string', enum: [...HIVE_TASK_STATUSES], description: 'Optional new status.' },
           result: { type: 'string', description: 'Optional outcome note.' },
           assignee: { type: 'string', description: 'Optional new owner.' }
         },
