@@ -1282,6 +1282,7 @@
     "newWorkHint": "عمل جديد؟ أرسله إلى {{godName}} (تبويب المراقبة)",
     "colTodo": "للتنفيذ",
     "colDoing": "قيد التنفيذ",
+    "colReady": "جاهز",
     "colBlocked": "معطَّل",
     "colDone": "منجَز",
     "colBacklog": "قائمة المتأخرات",

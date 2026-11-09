@@ -1282,6 +1282,7 @@
     "newWorkHint": "new work? dispatch it to {{godName}} (monitor tab)",
     "colTodo": "TODO",
     "colDoing": "DOING",
+    "colReady": "READY",
     "colBlocked": "BLOCKED",
     "colDone": "DONE",
     "colBacklog": "BACKLOG",

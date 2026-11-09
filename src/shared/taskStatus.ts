@@ -1,5 +1,5 @@
 /** Statuses understood by every task-board surface. */
-export const HIVE_TASK_STATUSES = ['todo', 'doing', 'blocked', 'done', 'backlog'] as const;
+export const HIVE_TASK_STATUSES = ['todo', 'doing', 'ready', 'blocked', 'done', 'backlog', 'cancelled'] as const;
 
 export type HiveTaskStatus = (typeof HIVE_TASK_STATUSES)[number];
 
