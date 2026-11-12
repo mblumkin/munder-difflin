@@ -127,7 +127,6 @@ export function TasksKanban() {
   const { t } = useTranslation();
   const agents = useStore((s) => s.agents);
   const [tasks, setTasks] = useState<HiveTask[]>([]);
-  const [backlogExpanded, setBacklogExpanded] = useState(false);
   // Detail view: cards show just the title — clicking one opens the full
   // breakdown as an APP-WIDE overlay over the office floor (see
   // TaskDetailOverlay) — the content grows (contracts, deps, human Q&A), so it
@@ -196,35 +195,16 @@ export function TasksKanban() {
             background: col.accent, boxShadow: 'inset 0 -1px 0 var(--cth-ink-900)',
             fontFamily: 'var(--cth-font-display)', fontSize: 9, color: 'var(--cth-ink-900)'
           };
-          const backlog = col.key === 'backlog';
           return (
             <div key={col.key} style={{
               flex: '1 1 0', minWidth: 170, display: 'flex', flexDirection: 'column',
               background: 'var(--cth-cream-100)', boxShadow: 'inset 0 0 0 1px var(--cth-ink-300)'
             }}>
-              {backlog ? (
-                <button
-                  type="button"
-                  aria-expanded={backlogExpanded}
-                  aria-controls="kanban-backlog-cards"
-                  onClick={() => setBacklogExpanded((expanded) => !expanded)}
-                  style={{ ...headerStyle, width: '100%', border: 0, textAlign: 'left', cursor: 'pointer' }}
-                >
-                  {t(col.labelKey)}
-                  <span aria-hidden="true">{backlogExpanded ? '▾' : '▸'}</span>
-                  <span style={{ marginLeft: 'auto', fontSize: 11, fontFamily: 'var(--cth-font-ui)' }}>{cards.length}</span>
-                </button>
-              ) : (
-                <div style={headerStyle}>
-                  {t(col.labelKey)}
-                  <span style={{ marginLeft: 'auto', fontSize: 11, fontFamily: 'var(--cth-font-ui)' }}>{cards.length}</span>
-                </div>
-              )}
-              <div
-                id={backlog ? 'kanban-backlog-cards' : undefined}
-                hidden={backlog && !backlogExpanded}
-                style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 6, display: backlog && !backlogExpanded ? 'none' : 'flex', flexDirection: 'column', gap: 6 }}
-              >
+              <div style={headerStyle}>
+                {t(col.labelKey)}
+                <span style={{ marginLeft: 'auto', fontSize: 11, fontFamily: 'var(--cth-font-ui)' }}>{cards.length}</span>
+              </div>
+              <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 6, display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {cards.length === 0 && (
                   <div style={{ fontSize: 12, color: 'var(--cth-ink-300)', textAlign: 'center', padding: '8px 0' }}>—</div>
                 )}
