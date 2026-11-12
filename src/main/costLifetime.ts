@@ -39,7 +39,8 @@
  * Read-only: this module never writes to the ledger.
  */
 
-import { createReadStream, statSync } from 'fs';
+import { createReadStream, readdirSync, statSync } from 'fs';
+import { basename, dirname, join } from 'path';
 
 /** Per (agent, session) fold state: closed segments plus the open one. */
 interface Segment {
@@ -47,6 +48,11 @@ interface Segment {
   committed: number;
   /** High-water mark of the segment currently open. */
   peak: number;
+}
+
+interface FileCursor {
+  offset: number;
+  tail: Buffer;
 }
 
 /** Float noise guard. Real resets drop by cents at minimum, so anything below
@@ -59,10 +65,8 @@ const MAX_BYTES_PER_PASS = 8 * 1024 * 1024;
 
 export class CostLedgerTotals {
   /** Bytes of the ledger already folded. */
-  private offset = 0;
-  /** Trailing partial line, kept as BYTES so a multi-byte character split
-   *  across a read boundary is never decoded in half. */
-  private tail: Buffer = Buffer.alloc(0);
+  /** Per-file offsets survive the active file being renamed into an archive. */
+  private readonly cursors = new Map<string, FileCursor>();
   /** `agentId \t sessionId` → fold state. */
   private readonly seg = new Map<string, Segment>();
   /** agentId → lifetime usd. Recomputed after each pass. */
@@ -121,42 +125,76 @@ export class CostLedgerTotals {
   }
 
   private async fold(ledgerPath: string): Promise<void> {
-    let size: number;
-    try { size = statSync(ledgerPath).size; } catch { return; }
+    const dir = dirname(ledgerPath);
+    const activeName = basename(ledgerPath);
+    const stem = activeName.replace(/\.jsonl$/, '');
+    const escaped = stem.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const archiveRe = new RegExp(`^${escaped}\\.(\\d{4}-\\d{2}-\\d{2})(?:-(\\d+))?\\.jsonl$`);
+    let names: string[];
+    try { names = readdirSync(dir); } catch { return; }
+    const archives = names.filter((name) => archiveRe.test(name))
+      .sort((a, b) => {
+        const ma = archiveRe.exec(a)!;
+        const mb = archiveRe.exec(b)!;
+        return ma[1].localeCompare(mb[1]) || Number(ma[2] ?? 1) - Number(mb[2] ?? 1);
+      })
+      .map((name) => join(dir, name));
+    const paths = [...archives, ledgerPath];
+    const files: Array<{ path: string; id: string; size: number }> = [];
+    for (const p of paths) {
+      try {
+        const stat = statSync(p);
+        files.push({ path: p, id: `${stat.dev}:${stat.ino}`, size: stat.size });
+      } catch { /* rotation can move the active file between listing and stat */ }
+    }
+    if (!files.length) return;
 
-    // Truncated or rotated underneath us: the offset now points past the end,
-    // so every segment we hold is suspect. Start clean.
-    if (size < this.offset) this.reset();
-    if (size === this.offset) { this.warm = true; return; }
+    // A true truncation is different from rename rotation. Rebuild all chunks
+    // if any known file shrank, so stale offsets never skip replacement bytes.
+    if (files.some(({ id, size }) => size < (this.cursors.get(id)?.offset ?? 0))) this.reset();
 
-    const end = Math.min(size, this.offset + MAX_BYTES_PER_PASS) - 1;
-    const from = this.offset;
-
-    await new Promise<void>((resolve, reject) => {
-      const stream = createReadStream(ledgerPath, { start: from, end });
-      stream.on('data', (chunk: string | Buffer) => {
-        const buf = typeof chunk === 'string' ? Buffer.from(chunk) : chunk;
-        this.consume(buf);
+    let budget = MAX_BYTES_PER_PASS;
+    let caughtUp = true;
+    for (const file of files) {
+      let cursor = this.cursors.get(file.id);
+      if (!cursor) {
+        cursor = { offset: 0, tail: Buffer.alloc(0) };
+        this.cursors.set(file.id, cursor);
+      }
+      if (cursor.offset >= file.size) continue;
+      if (budget <= 0) { caughtUp = false; continue; }
+      const bytes = Math.min(file.size - cursor.offset, budget);
+      const end = cursor.offset + bytes - 1;
+      await new Promise<void>((resolve, reject) => {
+        const stream = createReadStream(file.path, { start: cursor!.offset, end });
+        stream.on('data', (chunk: string | Buffer) => {
+          const buf = typeof chunk === 'string' ? Buffer.from(chunk) : chunk;
+          cursor!.tail = this.consume(buf, cursor!.tail);
+        });
+        stream.on('error', reject);
+        stream.on('end', () => resolve());
       });
-      stream.on('error', reject);
-      stream.on('end', () => resolve());
-    });
+      cursor.offset = end + 1;
+      budget -= bytes;
+      if (cursor.offset < file.size) caughtUp = false;
+    }
 
-    this.offset = end + 1;
     this.recompute();
-    // Only "warm" once we have caught up to EOF; a capped pass is still behind.
-    if (this.offset >= size) this.warm = true;
+    // Existing cursors can grow while this pass runs; another tick will catch
+    // the appended tail. A capped pass is not ready until every chunk is read.
+    this.warm = caughtUp;
   }
 
-  /** Fold one buffer, holding back any incomplete trailing line. */
-  private consume(chunk: Buffer): void {
-    const buf = this.tail.length ? Buffer.concat([this.tail, chunk]) : chunk;
+  /** Fold one buffer, holding back any incomplete trailing line per file. */
+  private consume(chunk: Buffer, tail: Buffer = Buffer.alloc(0)): Buffer {
+    const buf = tail.length ? Buffer.concat([tail, chunk]) : chunk;
     const cut = buf.lastIndexOf(0x0a); // '\n'
-    if (cut === -1) { this.tail = buf; return; }
-    this.tail = buf.subarray(cut + 1);
+    if (cut === -1) return buf;
+    const nextTail = buf.subarray(cut + 1);
     for (const line of buf.subarray(0, cut).toString('utf8').split('\n')) {
       if (line) this.foldLine(line);
     }
+    return nextTail;
   }
 
   private foldLine(line: string): void {
@@ -188,8 +226,7 @@ export class CostLedgerTotals {
   }
 
   private reset(): void {
-    this.offset = 0;
-    this.tail = Buffer.alloc(0);
+    this.cursors.clear();
     this.seg.clear();
     this.totals = new Map();
     this.warm = false;
@@ -203,7 +240,7 @@ export class CostLedgerTotals {
 export function lifetimeUsdFromLedger(text: string): Map<string, number> {
   const t = new CostLedgerTotals();
   // Reuse the exact same fold path so the two can never disagree.
-  (t as unknown as { consume(b: Buffer): void }).consume(Buffer.from(text.endsWith('\n') ? text : `${text}\n`));
+  (t as unknown as { consume(b: Buffer): Buffer }).consume(Buffer.from(text.endsWith('\n') ? text : `${text}\n`));
   (t as unknown as { recompute(): void }).recompute();
   return t.all();
 }
