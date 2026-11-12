@@ -56,13 +56,15 @@ export function waitsOnHuman(t: HiveTask): boolean {
 type Status = HiveTaskStatus;
 
 const COLUMNS: { key: Status; labelKey: string; accent: string }[] = [
+  { key: 'backlog', labelKey: 'kanban.colBacklog', accent: 'var(--cth-lilac)' },
   { key: 'todo',    labelKey: 'kanban.colTodo',    accent: 'var(--cth-sky)' },
   { key: 'doing',   labelKey: 'kanban.colDoing',   accent: 'var(--cth-lemon)' },
-  { key: 'ready',   labelKey: 'kanban.colReady',   accent: 'var(--cth-mint)' },
   { key: 'blocked', labelKey: 'kanban.colBlocked', accent: 'var(--cth-coral)' },
-  { key: 'done',    labelKey: 'kanban.colDone',    accent: 'var(--cth-mint)' },
-  { key: 'backlog', labelKey: 'kanban.colBacklog', accent: 'var(--cth-lilac)' }
+  { key: 'ready',   labelKey: 'kanban.colReady',   accent: 'var(--cth-peach)' },
+  { key: 'done',    labelKey: 'kanban.colDone',    accent: 'var(--cth-mint)' }
 ];
+// An unknown status falls back to To Do by key, not by position: Backlog is first.
+const TODO_COLUMN = COLUMNS.find((c) => c.key === 'todo')!;
 
 const POLL_MS = 5000;
 
@@ -125,7 +127,6 @@ export function TasksKanban() {
   const { t } = useTranslation();
   const agents = useStore((s) => s.agents);
   const [tasks, setTasks] = useState<HiveTask[]>([]);
-  const [backlogExpanded, setBacklogExpanded] = useState(false);
   // Detail view: cards show just the title — clicking one opens the full
   // breakdown as an APP-WIDE overlay over the office floor (see
   // TaskDetailOverlay) — the content grows (contracts, deps, human Q&A), so it
@@ -194,35 +195,16 @@ export function TasksKanban() {
             background: col.accent, boxShadow: 'inset 0 -1px 0 var(--cth-ink-900)',
             fontFamily: 'var(--cth-font-display)', fontSize: 9, color: 'var(--cth-ink-900)'
           };
-          const backlog = col.key === 'backlog';
           return (
             <div key={col.key} style={{
               flex: '1 1 0', minWidth: 170, display: 'flex', flexDirection: 'column',
               background: 'var(--cth-cream-100)', boxShadow: 'inset 0 0 0 1px var(--cth-ink-300)'
             }}>
-              {backlog ? (
-                <button
-                  type="button"
-                  aria-expanded={backlogExpanded}
-                  aria-controls="kanban-backlog-cards"
-                  onClick={() => setBacklogExpanded((expanded) => !expanded)}
-                  style={{ ...headerStyle, width: '100%', border: 0, textAlign: 'left', cursor: 'pointer' }}
-                >
-                  {t(col.labelKey)}
-                  <span aria-hidden="true">{backlogExpanded ? '▾' : '▸'}</span>
-                  <span style={{ marginLeft: 'auto', fontSize: 11, fontFamily: 'var(--cth-font-ui)' }}>{cards.length}</span>
-                </button>
-              ) : (
-                <div style={headerStyle}>
-                  {t(col.labelKey)}
-                  <span style={{ marginLeft: 'auto', fontSize: 11, fontFamily: 'var(--cth-font-ui)' }}>{cards.length}</span>
-                </div>
-              )}
-              <div
-                id={backlog ? 'kanban-backlog-cards' : undefined}
-                hidden={backlog && !backlogExpanded}
-                style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 6, display: backlog && !backlogExpanded ? 'none' : 'flex', flexDirection: 'column', gap: 6 }}
-              >
+              <div style={headerStyle}>
+                {t(col.labelKey)}
+                <span style={{ marginLeft: 'auto', fontSize: 11, fontFamily: 'var(--cth-font-ui)' }}>{cards.length}</span>
+              </div>
+              <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 6, display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {cards.length === 0 && (
                   <div style={{ fontSize: 12, color: 'var(--cth-ink-300)', textAlign: 'center', padding: '8px 0' }}>—</div>
                 )}
@@ -341,7 +323,7 @@ export function TaskDetail({ task, all, assigneeName, onMove, onAssign, onClose 
 }) {
   const { t } = useTranslation();
   const rtl = useRtl();
-  const col = COLUMNS.find((c) => c.key === task.status) ?? COLUMNS[0];
+  const col = COLUMNS.find((c) => c.key === task.status) ?? TODO_COLUMN;
   // Belt + suspenders: parseTasks normalizes these, but the ledger is a
   // hand-written file — never trust a card's shape at the point of use.
   const deps = (task.dependsOn ?? [])
@@ -448,7 +430,7 @@ export function TaskDetail({ task, all, assigneeName, onMove, onAssign, onClose 
                   {t('kanban.dependsOn')}
                 </div>
                 {deps.map((d) => {
-                  const dc = COLUMNS.find((c) => c.key === d.status) ?? COLUMNS[0];
+                  const dc = COLUMNS.find((c) => c.key === d.status) ?? TODO_COLUMN;
                   return (
                     <div key={d.id} style={{
                       display: 'flex', alignItems: 'center', gap: 6, padding: '3px 6px',
