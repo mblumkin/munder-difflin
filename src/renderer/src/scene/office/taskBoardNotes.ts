@@ -9,10 +9,17 @@ export interface TaskBoardNotes<T> {
 }
 
 export function taskBoardNotes<T extends { status: string }>(tasks: T[]): TaskBoardNotes<T> {
-  return {
-    blocked: tasks.filter((t) => t.status === 'blocked').map(() => 'blocked'),
-    todo: tasks.filter((t) => t.status === 'todo').map(() => 'todo'),
-    doing: tasks.filter((t) => t.status === 'doing'),
-    done: tasks.filter((t) => t.status === 'done').length
-  };
+  const notes: TaskBoardNotes<T> = { blocked: [], todo: [], doing: [], done: 0 };
+  for (const t of tasks) {
+    switch (t.status) {
+      case 'blocked': notes.blocked.push('blocked'); break;
+      case 'todo': notes.todo.push('todo'); break;
+      case 'ready': notes.todo.push('ready'); break; // on the To Do board, in Ready's color (Mason, AEON-3397)
+      case 'doing': notes.doing.push(t); break;
+      case 'done': notes.done++; break;
+      case 'backlog': break; // Backlog stays off the floor (Mason, AEON-3397)
+      default: break; // cancelled, a card being carried, and anything else draw no note
+    }
+  }
+  return notes;
 }
