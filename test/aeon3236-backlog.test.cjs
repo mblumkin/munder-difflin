@@ -83,24 +83,16 @@ function renderKanbanWithTasks(rawTasks) {
       return { type: node.type, props: node.props, children: materialize(node.props.children) };
     };
     hookIndex = 0;
-    const collapsedElement = TasksKanban();
-    const collapsed = materialize(collapsedElement);
-    const collapsedMarkup = ReactDOMServer.renderToStaticMarkup(collapsedElement);
-    const columns = collapsed.children[1].children;
+    const element = TasksKanban();
+    const columns = materialize(element).children[1].children;
     const lane = (status) => columns.find((column) => renderedText(column.children[0]).startsWith(`kanban.col${status}`));
-    const todo = lane('Todo');
-    const ready = lane('Ready');
-    const backlog = lane('Backlog');
-    const cancelled = lane('Cancelled');
-    const toggle = backlog.children[0];
-    toggle.props.onClick();
-    hookIndex = 0;
-    const expandedElement = TasksKanban();
-    const expanded = materialize(expandedElement);
-    const expandedMarkup = ReactDOMServer.renderToStaticMarkup(expandedElement);
     return {
-      collapsed: { columns, todo, ready, backlog, cancelled, toggle, markup: collapsedMarkup },
-      expanded: { backlog: laneFrom(expanded, 'Backlog'), markup: expandedMarkup }
+      columns,
+      todo: lane('Todo'),
+      ready: lane('Ready'),
+      backlog: lane('Backlog'),
+      cancelled: lane('Cancelled'),
+      markup: ReactDOMServer.renderToStaticMarkup(element)
     };
   } finally {
     React.useState = originals.useState;
@@ -114,10 +106,6 @@ function renderKanbanWithTasks(rawTasks) {
   }
 }
 
-function laneFrom(tree, status) {
-  return tree.children[1].children.find((column) => renderedText(column.children[0]).startsWith(`kanban.col${status}`));
-}
-
 function renderedText(node) {
   if (Array.isArray(node)) return node.map(renderedText).join('');
   if (typeof node === 'string' || typeof node === 'number') return String(node);
@@ -125,40 +113,32 @@ function renderedText(node) {
 }
 
 test('TasksKanban renders Ready separately, filters Cancelled, and falls unknown statuses to Todo', () => {
-  const tree = renderKanbanWithTasks({ tasks: [
+  const { todo, ready, backlog, cancelled, markup } = renderKanbanWithTasks({ tasks: [
     { id: 'AEON-READY', title: 'Ready card', status: 'ready' },
     { id: 'AEON-CANCELLED', title: 'Cancelled card', status: 'cancelled' },
     { id: 'AEON-BACKLOG', title: 'Backlog card', status: 'backlog' },
     { id: 'AEON-TODO', title: 'Todo card', status: 'todo' },
     { id: 'AEON-UNKNOWN', title: 'Unknown status card', status: 'mystery' }
   ] });
-  const { todo, backlog, cancelled, toggle } = tree.collapsed;
-  assert.match(renderedText(tree.collapsed.ready.children[0]), /kanban\.colReady/);
-  assert.match(renderedText(tree.collapsed.ready.children[1]), /Ready card/);
+  assert.match(renderedText(ready.children[0]), /kanban\.colReady/);
+  assert.match(renderedText(ready.children[1]), /Ready card/);
   assert.doesNotMatch(renderedText(todo.children[1]), /Ready card/);
   assert.equal(cancelled, undefined, 'there is no Cancelled lane');
-  assert.equal(toggle.type, 'button');
-  assert.equal(toggle.props['aria-expanded'], false, 'Backlog starts collapsed');
-  assert.match(renderedText(toggle), /1$/, 'the collapsed Backlog header shows its card count');
-  assert.equal(backlog.children[1].props.hidden, true, 'the Backlog card container is hidden');
-  assert.match(tree.collapsed.markup, /aria-expanded="false"/);
-  assert.match(tree.collapsed.markup, /id="kanban-backlog-cards" hidden=""/);
   assert.match(renderedText(todo.children[1]), /Todo card/);
   assert.match(renderedText(todo.children[1]), /Unknown status card/, 'unknown status cards render in Todo');
-  assert.doesNotMatch(tree.collapsed.markup, /Cancelled card/, 'cancelled cards are filtered from the board');
+  assert.doesNotMatch(markup, /Cancelled card/, 'cancelled cards are filtered from the board');
 
-  const expandedBacklog = tree.expanded.backlog;
-  assert.equal(expandedBacklog.children[0].props['aria-expanded'], true, 'the toggle expands Backlog');
-  assert.equal(expandedBacklog.children[1].props.hidden, false);
-  assert.match(renderedText(expandedBacklog.children[1]), /Backlog card/);
-  assert.match(tree.expanded.markup, /aria-expanded="true"/);
-  assert.match(tree.expanded.markup, /id="kanban-backlog-cards"/);
-  assert.doesNotMatch(tree.expanded.markup, /id="kanban-backlog-cards" hidden=""/);
-  assert.match(tree.expanded.markup, /Backlog card/);
+  // AEON-3396 (Mason): Backlog no longer collapses; it shows its cards like every other lane.
+  assert.equal(backlog.children[0].type, 'div', 'the Backlog header is a plain header, not a toggle');
+  assert.match(renderedText(backlog.children[0]), /1$/, 'the Backlog header shows its card count');
+  assert.notEqual(backlog.children[1].props.hidden, true, 'the Backlog card container is not hidden');
+  assert.notEqual(backlog.children[1].props.style.display, 'none');
+  assert.match(renderedText(backlog.children[1]), /Backlog card/);
+  assert.doesNotMatch(markup, /aria-expanded|hidden=""/, 'no lane on the board collapses');
 });
 
 test('the board reads Backlog, To Do, Doing, Blocked, Ready, Done, and no two lanes share an accent', () => {
-  const { columns } = renderKanbanWithTasks({ tasks: [{ id: 'AEON-BACKLOG', title: 'Backlog card', status: 'backlog' }] }).collapsed;
+  const { columns } = renderKanbanWithTasks({ tasks: [{ id: 'AEON-BACKLOG', title: 'Backlog card', status: 'backlog' }] });
   const lanes = columns.map((column) => ({
     label: renderedText(column.children[0]).match(/^kanban\.col([A-Za-z]+)/)[1],
     accent: column.children[0].props.style.background
