@@ -11,6 +11,7 @@ import { DeskScreen } from './DeskScreen';
 import { MessageEnvelope, type MessageAct } from './MessageEnvelope';
 import { hexToNumber, DEFAULT_CHARACTER } from './cast';
 import { pickSoloLine, pickExchange, type BreakSpot } from './cafeteriaLines';
+import { taskBoardNotes } from './taskBoardNotes';
 import { colors } from '@/design/tokens';
 import { loadTheme, resolveThemeMap, themeTilesetUrls } from './themeLoader';
 import {
@@ -1070,15 +1071,11 @@ export function OfficeFloor() {
       const drawTaskBoard = (tasks: BoardTask[]): void => {
         boardG.clear();
         clearDeskNotes();
-        const blocked = tasks.filter((t) => t.status === 'blocked').map(() => 'blocked');
-        const todoNotes: string[] = tasks.filter((t) => t.status === 'todo').map(() => 'todo');
-        let done = 0;
+        const { blocked, todo: todoNotes, doing, done } = taskBoardNotes(tasks);
         // doing → taken off the wall: pin it to the assignee's desk. Without a
         // resolvable desk (no assignee / not on the floor) it falls back onto
         // the TODO board as a blue note, so nothing ever silently disappears.
-        for (const t of tasks) {
-          if (t.status === 'done') { done++; continue; }
-          if (t.status !== 'doing') continue;
+        for (const t of doing) {
           const rt = t.assignee ? runtimes.get(t.assignee) : undefined;
           if (!rt) { todoNotes.push('doing'); continue; }
           const desk = rt.character.getDeskTile();
