@@ -87,9 +87,9 @@ function renderKanbanWithTasks(rawTasks) {
     const collapsed = materialize(collapsedElement);
     const collapsedMarkup = ReactDOMServer.renderToStaticMarkup(collapsedElement);
     const columns = collapsed.children[1].children;
-    const todo = columns[0];
-    const ready = columns[2];
     const lane = (status) => columns.find((column) => renderedText(column.children[0]).startsWith(`kanban.col${status}`));
+    const todo = lane('Todo');
+    const ready = lane('Ready');
     const backlog = lane('Backlog');
     const cancelled = lane('Cancelled');
     const toggle = backlog.children[0];
@@ -99,7 +99,7 @@ function renderKanbanWithTasks(rawTasks) {
     const expanded = materialize(expandedElement);
     const expandedMarkup = ReactDOMServer.renderToStaticMarkup(expandedElement);
     return {
-      collapsed: { todo, ready, backlog, cancelled, toggle, markup: collapsedMarkup },
+      collapsed: { columns, todo, ready, backlog, cancelled, toggle, markup: collapsedMarkup },
       expanded: { backlog: laneFrom(expanded, 'Backlog'), markup: expandedMarkup }
     };
   } finally {
@@ -155,6 +155,21 @@ test('TasksKanban renders Ready separately, filters Cancelled, and falls unknown
   assert.match(tree.expanded.markup, /id="kanban-backlog-cards"/);
   assert.doesNotMatch(tree.expanded.markup, /id="kanban-backlog-cards" hidden=""/);
   assert.match(tree.expanded.markup, /Backlog card/);
+});
+
+test('the board reads Backlog, To Do, Doing, Blocked, Ready, Done, and no two lanes share an accent', () => {
+  const { columns } = renderKanbanWithTasks({ tasks: [{ id: 'AEON-BACKLOG', title: 'Backlog card', status: 'backlog' }] }).collapsed;
+  const lanes = columns.map((column) => ({
+    label: renderedText(column.children[0]).match(/^kanban\.col([A-Za-z]+)/)[1],
+    accent: column.children[0].props.style.background
+  }));
+  assert.deepEqual(lanes.map((l) => l.label), ['Backlog', 'Todo', 'Doing', 'Blocked', 'Ready', 'Done']);
+  assert.equal(new Set(lanes.map((l) => l.accent)).size, lanes.length, JSON.stringify(lanes));
+
+  const notes = source('src/renderer/src/scene/office/themeRegistry.ts').match(/noteColors:\s*\{([^}]*)\}/)[1];
+  const noteColors = Object.fromEntries([...notes.matchAll(/(\w+):\s*(0x[0-9a-f]+)/gi)].map(([, k, v]) => [k, v.toLowerCase()]));
+  assert.ok(noteColors.ready, 'the floor has a note color for ready');
+  assert.equal(new Set(Object.values(noteColors)).size, Object.keys(noteColors).length, JSON.stringify(noteColors));
 });
 
 test('task schemas and generated protocol consume the shared status list', () => {
