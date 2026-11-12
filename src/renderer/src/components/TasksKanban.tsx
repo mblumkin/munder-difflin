@@ -56,13 +56,15 @@ export function waitsOnHuman(t: HiveTask): boolean {
 type Status = HiveTaskStatus;
 
 const COLUMNS: { key: Status; labelKey: string; accent: string }[] = [
+  { key: 'backlog', labelKey: 'kanban.colBacklog', accent: 'var(--cth-lilac)' },
   { key: 'todo',    labelKey: 'kanban.colTodo',    accent: 'var(--cth-sky)' },
   { key: 'doing',   labelKey: 'kanban.colDoing',   accent: 'var(--cth-lemon)' },
-  { key: 'ready',   labelKey: 'kanban.colReady',   accent: 'var(--cth-mint)' },
   { key: 'blocked', labelKey: 'kanban.colBlocked', accent: 'var(--cth-coral)' },
-  { key: 'done',    labelKey: 'kanban.colDone',    accent: 'var(--cth-mint)' },
-  { key: 'backlog', labelKey: 'kanban.colBacklog', accent: 'var(--cth-lilac)' }
+  { key: 'ready',   labelKey: 'kanban.colReady',   accent: 'var(--cth-peach)' },
+  { key: 'done',    labelKey: 'kanban.colDone',    accent: 'var(--cth-mint)' }
 ];
+// An unknown status falls back to To Do by key, not by position: Backlog is first.
+const TODO_COLUMN = COLUMNS.find((c) => c.key === 'todo')!;
 
 const POLL_MS = 5000;
 
@@ -341,7 +343,7 @@ export function TaskDetail({ task, all, assigneeName, onMove, onAssign, onClose 
 }) {
   const { t } = useTranslation();
   const rtl = useRtl();
-  const col = COLUMNS.find((c) => c.key === task.status) ?? COLUMNS[0];
+  const col = COLUMNS.find((c) => c.key === task.status) ?? TODO_COLUMN;
   // Belt + suspenders: parseTasks normalizes these, but the ledger is a
   // hand-written file — never trust a card's shape at the point of use.
   const deps = (task.dependsOn ?? [])
@@ -448,7 +450,7 @@ export function TaskDetail({ task, all, assigneeName, onMove, onAssign, onClose 
                   {t('kanban.dependsOn')}
                 </div>
                 {deps.map((d) => {
-                  const dc = COLUMNS.find((c) => c.key === d.status) ?? COLUMNS[0];
+                  const dc = COLUMNS.find((c) => c.key === d.status) ?? TODO_COLUMN;
                   return (
                     <div key={d.id} style={{
                       display: 'flex', alignItems: 'center', gap: 6, padding: '3px 6px',
