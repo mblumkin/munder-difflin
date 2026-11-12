@@ -17,6 +17,9 @@ All notable changes to this project are documented here. The format is based on
 
 ### Fixed
 
+- Ready cards now show on the office floor. Each one is a note on the To Do corkboard in the
+  Ready lane's color; before, the floor drew nothing for them. Backlog cards stay off the floor
+  (AEON-3397).
 - The cost ledger no longer grows past its size cap. Once it passes 48 MiB the app moves it to a
   dated archive file and starts a new one, and the lifetime cost totals read the archives as well,
   so the totals do not change (AEON-2986).
