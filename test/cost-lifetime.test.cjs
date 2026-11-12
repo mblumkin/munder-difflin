@@ -130,15 +130,54 @@ test('re-reading an unchanged ledger does not double count', async () => {
   assert.equal(t.usdFor('a'), 14);
 });
 
-test('truncation or rotation rebuilds from scratch instead of going negative', async () => {
+test('truncation rebuilds from scratch instead of going negative', async () => {
   const p = ledgerWith([row('a', 's1', 10), row('a', 's1', 25)]);
   const t = new CostLedgerTotals();
   await t.refreshFully(p);
   assert.equal(t.usdFor('a'), 25);
 
-  fs.writeFileSync(p, `${row('a', 's1', 2)}\n`); // rotated: smaller than the offset
+  fs.writeFileSync(p, `${row('a', 's1', 2)}\n`); // truncated: smaller than the offset
   await t.refreshFully(p);
   assert.equal(t.usdFor('a'), 2, 'stale offset must not survive a truncation');
+});
+
+test('monthly archives fold before the active ledger without losing a reset across the boundary', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'md-cost-archives-'));
+  const active = path.join(dir, 'cost-ledger.jsonl');
+  fs.writeFileSync(path.join(dir, 'cost-ledger.2026-10-31.jsonl'), `${row('a', 's1', 8)}\n${row('a', 's1', 20)}\n`);
+  fs.writeFileSync(active, `${row('a', 's1', 0)}\n${row('a', 's1', 3)}\n`);
+
+  const t = new CostLedgerTotals();
+  await t.refreshFully(active);
+  const unsplit = await totalsFor([row('a', 's1', 8), row('a', 's1', 20), row('a', 's1', 0), row('a', 's1', 3)]);
+  assert.equal(t.usdFor('a'), unsplit.usdFor('a'));
+  assert.equal(t.usdFor('a'), 23);
+});
+
+test('an already-folded active ledger is not double counted when it becomes an archive', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'md-cost-rotate-read-'));
+  const active = path.join(dir, 'cost-ledger.jsonl');
+  fs.writeFileSync(active, `${row('a', 's1', 8)}\n${row('a', 's1', 20)}\n`);
+  const t = new CostLedgerTotals();
+  await t.refreshFully(active);
+  fs.renameSync(active, path.join(dir, 'cost-ledger.2026-11-10.jsonl'));
+  fs.writeFileSync(active, `${row('a', 's1', 0)}\n${row('a', 's1', 3)}\n`);
+  await t.refreshFully(active);
+  assert.equal(t.usdFor('a'), 23);
+});
+
+test('a large archive is folded over multiple capped passes before the active tail', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'md-cost-large-archive-'));
+  const active = path.join(dir, 'cost-ledger.jsonl');
+  const archive = path.join(dir, 'cost-ledger.2026-11-09.jsonl');
+  const line = row('a', 's1', 7);
+  const count = Math.ceil((8 * 1024 * 1024 + 1) / (line.length + 1));
+  fs.writeFileSync(archive, `${Array(count).fill(line).join('\n')}\n`);
+  fs.writeFileSync(active, `${row('a', 's1', 0)}\n${row('a', 's1', 0.3)}\n`);
+
+  const t = new CostLedgerTotals();
+  await t.refreshFully(active);
+  assert.equal(t.usdFor('a'), 7.3);
 });
 
 test('malformed and empty lines are skipped, not fatal', async () => {

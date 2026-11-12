@@ -386,6 +386,7 @@ function repairLiteralLineBreaksInJsonStrings(raw: string): { text: string; chan
  *  Best-effort throughout: a diagnostic that breaks teardown is worse than one
  *  that keeps a few extra files. */
 const MAX_CRASH_LOGS = 50;
+const COST_LEDGER_ROTATE_BYTES = 48 * 1024 * 1024;
 
 function pruneCrashLogs(dir: string): void {
   try {
@@ -418,7 +419,9 @@ export class HiveManager {
     // other git-touching operation (see `maybeScheduleMaintenanceGc`'s doc
     // comment), so a test drives the SAME `gitBin` override every other
     // git()-based test uses instead of injecting a fake spawn function here.
-    private maintenanceGcOptions?: { everyCommits?: number }
+    private maintenanceGcOptions?: { everyCommits?: number },
+    // Test seam: production rotates below the registered 64 MiB cap.
+    private costLedgerOptions?: { rotateAtBytes?: number }
   ) {}
 
   private routerTimer: NodeJS.Timeout | null = null;
@@ -681,7 +684,7 @@ export class HiveManager {
     // `diagnostics/` (AEON-1487) holds `sample` captures taken on a commit-latency
     // breach — same reasoning as crashes/: a raw process sample, not structured
     // data, stays local rather than becoming permanent hive-repo history.
-    const want = ['fleet.json', 'hooks.sock', 'cost-ledger.jsonl', 'crashes/', 'diagnostics/', '.DS_Store'];
+    const want = ['fleet.json', 'hooks.sock', 'cost-ledger*.jsonl', 'crashes/', 'diagnostics/', '.DS_Store'];
     let lines: string[] = [];
     if (existsSync(gitignore)) { try { lines = readFileSync(gitignore, 'utf8').split('\n'); } catch { lines = []; } }
     const missing = want.filter((w) => !lines.includes(w));
@@ -2941,7 +2944,23 @@ export class HiveManager {
       model: sample.model,
       usd: sample.usd
     };
-    try { appendFileSync(join(root, 'cost-ledger.jsonl'), JSON.stringify(row) + '\n', 'utf8'); } catch { /* noop */ }
+    const ledgerPath = join(root, 'cost-ledger.jsonl');
+    const line = JSON.stringify(row) + '\n';
+    try {
+      const rotateAt = this.costLedgerOptions?.rotateAtBytes;
+      const threshold = typeof rotateAt === 'number' && Number.isFinite(rotateAt) && rotateAt > 0
+        ? rotateAt : COST_LEDGER_ROTATE_BYTES;
+      const size = existsSync(ledgerPath) ? statSync(ledgerPath).size : 0;
+      if (size > 0 && size + Buffer.byteLength(line, 'utf8') > threshold) {
+        const date = new Date().toISOString().slice(0, 10);
+        let archivePath = join(root, `cost-ledger.${date}.jsonl`);
+        for (let suffix = 2; existsSync(archivePath); suffix++) {
+          archivePath = join(root, `cost-ledger.${date}-${suffix}.jsonl`);
+        }
+        renameSync(ledgerPath, archivePath);
+      }
+      appendFileSync(ledgerPath, line, 'utf8');
+    } catch { /* best-effort telemetry; a failed rotation must not truncate history */ }
   }
 
   // — json + atomic io —
@@ -3111,11 +3130,14 @@ export class HiveManager {
    * commit — and the hive commits constantly. A quarter-gigabyte ledger with a
    * few thousand commits behind it is several hundred gigabytes of blob that
    * git has to walk, which is what turns a routine `gc` into a multi-gigabyte
-   * `pack-objects` run. The ignore line in ensureHive keeps new copies out;
+   * `pack-objects` run. The wildcard ignore pattern in ensureHive keeps both
+   * the active file and dated archives out;
    * this drops the one already in the index, because git keeps recording a
    * file it is already tracking no matter what .gitignore says — so the ignore
    * line alone reads as a fix while the repo goes on growing. The ledger stays
-   * on disk, so the cost history the app reads is untouched.
+   * on disk, so the cost history the app reads is untouched. Archives need no
+   * separate untrack pass: they inherit the ignored active path and match the
+   * same wildcard after rotation.
    */
   private async untrackCostLedger(root: string): Promise<void> {
     if (this.untrackedCostLedger) return;
