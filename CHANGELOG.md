@@ -12,7 +12,8 @@ All notable changes to this project are documented here. The format is based on
 
 - The task board reads Backlog, To Do, Doing, Blocked, Ready, Done, from left to right, and the
   Ready lane is peach, so no two lanes share a color (Ready and Done were both green). The status
-  picker in a card's detail follows the same order (AEON-3396).
+  picker in a card's detail follows the same order. The Backlog lane no longer collapses: it
+  shows its cards like every other lane (AEON-3396).
 
 ### Fixed
 

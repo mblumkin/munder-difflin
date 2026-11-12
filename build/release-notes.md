@@ -1,3 +1,4 @@
 - **The board reads Backlog, To Do, Doing, Blocked, Ready, Done.**
 - **Ready has its own color, so no two lanes match.**
+- **Backlog shows its cards and no longer collapses.**
 - **The cost ledger rotates by date instead of growing past its cap.**
