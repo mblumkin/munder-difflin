@@ -795,7 +795,7 @@ export class HiveManager {
     writeFileSync(identity, this.identityText(meta), 'utf8'); // refresh on each spawn
 
     // W3 — bundled read-only skills: refresh the agent's .claude/skills/ from the
-    // app-resources skills/ dir on every spawn (same policy as identity.md), so an
+    // app-resources skills/ dir on every spawn, so an
     // agent always rides with the shipped safe skill set. Tolerant: a missing or
     // partial source dir is a no-op (Kevin populates the resource dir in lp-manifest).
     if (opts.skillsDir) this.copyBundledSkills(opts.skillsDir, join(dir, '.claude', 'skills'));
@@ -1064,8 +1064,9 @@ export class HiveManager {
     return { args, env };
   }
 
-  /** Update the durable job string (hire role) without respawning. Refreshes
-   *  registry.json + identity.md so the floor editor and the hive stay aligned. */
+  /** Update the durable job string (hire role) without respawning. Updates
+   *  registry.json and the Role line of identity.md so the floor editor and the
+   *  hive stay aligned. */
   patchAgentRole(id: string, role: string): { ok: boolean; error?: string } {
     const root = this.root();
     if (!root) return { ok: false, error: 'hive disabled' };
@@ -1080,7 +1081,17 @@ export class HiveManager {
       agent.lastSeen = Date.now();
       this.writeJson(join(root, 'registry.json'), reg);
       const identityPath = join(this.agentDir(id), 'identity.md');
-      writeFileSync(identityPath, this.identityText(agent), 'utf8');
+      // Touch the Role line only, so the rest of an authored file survives (AEON-3715):
+      // swap it, or insert it under the title (after the title's blank line) when absent.
+      const current = existsSync(identityPath) ? readFileSync(identityPath, 'utf8') : '';
+      const roleLine = `- Role: ${next}`;
+      let text = this.identityText(agent);
+      if (/^- Role: .*$/m.test(current)) text = current.replace(/^- Role: .*$/m, () => roleLine);
+      else if (current.trim()) {
+        const at = /^# .*\n(?:\r?\n)?/.exec(current)?.[0].length ?? 0;
+        text = current.slice(0, at) + roleLine + '\n' + current.slice(at);
+      }
+      writeFileSync(identityPath, text, 'utf8');
       this.appendLog({ kind: 'role', agentId: id, role: next });
       this.commit(`hive: role ${id}`, [join(root, 'registry.json'), identityPath]);
       return { ok: true };
@@ -1405,7 +1416,7 @@ export class HiveManager {
 
   /**
    * W3 — refresh an agent's bundled skills from the app-resources `skills/` dir.
-   * Mirrors `identity.md`: overwritten every spawn so the shipped safe set tracks
+   * Overwritten every spawn so the shipped safe set tracks
    * the app. Best-effort and fully tolerant — a missing/empty source dir is a no-op
    * (Kevin populates the resource dir in lp-manifest), and any IO error is swallowed
    * so skill provisioning can never block a spawn.
@@ -2405,8 +2416,8 @@ export class HiveManager {
       config += codexGuardHooksToml(readClaudeGuards());
       writeFileSync(join(home, 'config.toml'), config, 'utf8');
 
-      // The seat's tracked guide becomes this home's global AGENTS.md, refreshed per
-      // spawn like identity.md; a guide removed from the seat must not linger here.
+      // The seat's tracked guide becomes this home's global AGENTS.md, refreshed every
+      // spawn; a guide removed from the seat must not linger here.
       // A session that starts in `dir` already reads dir/AGENTS.md as a project doc
       // (Codex walks from the git root down to its start folder), so a copy here made
       // it read the guide twice (AEON-2096); only a seat starting elsewhere needs it.

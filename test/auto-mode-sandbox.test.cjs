@@ -27,6 +27,17 @@ const { autoModeFlagForProvider } = loadTs('src/shared/agentProvider.ts');
 
 function tmpHome() { return fs.mkdtempSync(path.join(os.tmpdir(), 'md-sandbox-')); }
 
+// AEON-3715: codex agents resolve the user's Codex home via os.homedir(), not the
+// HiveManager home, so without this the run mkdirs under the real ~/.codex.
+const realHome = process.env.HOME;
+const realProfile = process.env.USERPROFILE;
+process.env.HOME = process.env.USERPROFILE = tmpHome();
+assert.equal(os.homedir(), process.env.HOME, 'home redirect failed; aborting before touching the real home');
+test.after(() => {
+  if (realHome === undefined) delete process.env.HOME; else process.env.HOME = realHome;
+  if (realProfile === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = realProfile;
+});
+
 test('codex auto mode is workspace-write with approvals off, never the full bypass', () => {
   const flag = autoModeFlagForProvider('codex');
   assert.equal(flag, '-a never -s workspace-write');
