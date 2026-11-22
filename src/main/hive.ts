@@ -402,6 +402,40 @@ function gitCommandLine(args: string[]): string {
   return args.length > 8 ? `${args.slice(0, 8).join(' ')} (+${args.length - 8} more)` : args.join(' ');
 }
 
+/** AEON-3716: the POSIX `bin/runtime/node` shim. It prefers nvm's node for the
+ *  nearest .nvmrc (then nvm's default alias, then the newest nvm node) and runs
+ *  Electron as node only when no nvm node exists: a seat started with the bare
+ *  system PATH otherwise gets Electron's node (v24) under a repo pinned to 22.
+ *  Mirrors the hive's bin/runtime/hive-runtime-shim (AEON-3700). Never resolve
+ *  through PATH: this dir is on it, so `node` here would exec itself. */
+export function posixNodeShim(execPath: string): string {
+  return [
+    '#!/bin/sh',
+    'nvm_dir=${NVM_DIR:-$HOME/.nvm}',
+    'want=""',
+    'd=$(pwd -P)',
+    'while [ -n "$d" ]; do',
+    '  if [ -f "$d/.nvmrc" ]; then want=$(tr -d "[:space:]" < "$d/.nvmrc"); break; fi',
+    '  [ "$d" = / ] && break',
+    '  d=$(dirname "$d")',
+    'done',
+    // a failed `< file` redirect prints even with 2>/dev/null after it, so test first
+    'if [ -z "$want" ] && [ -f "$nvm_dir/alias/default" ]; then want=$(tr -d "[:space:]" < "$nvm_dir/alias/default"); fi',
+    'want=${want#v}',
+    'pick() {',
+    '  ls -1 "$nvm_dir/versions/node" 2>/dev/null | sed "s/^v//" | grep -E "^[0-9]+\\.[0-9]+\\.[0-9]+$" |',
+    '    awk -v w="$1" \'w == "" || index($0".", w".") == 1\' | sort -t. -k1,1n -k2,2n -k3,3n | tail -1',
+    '}',
+    'ver=$(pick "$want")',
+    '[ -n "$ver" ] || ver=$(pick "")',
+    'if [ -n "$ver" ] && [ -x "$nvm_dir/versions/node/v$ver/bin/node" ]; then',
+    '  exec "$nvm_dir/versions/node/v$ver/bin/node" "$@"',
+    'fi',
+    `ELECTRON_RUN_AS_NODE=1 exec "${execPath}" "$@"`,
+    ''
+  ].join('\n');
+}
+
 export class HiveManager {
   /**
    * @param getHome  Lazily resolve harnessHome so the hive follows config changes.
@@ -614,7 +648,7 @@ export class HiveManager {
         );
       } else {
         const p = join(dir, 'node');
-        writeFileSync(p, `#!/bin/sh\nELECTRON_RUN_AS_NODE=1 exec "${process.execPath}" "$@"\n`, 'utf8');
+        writeFileSync(p, posixNodeShim(process.execPath), 'utf8');
         chmodSync(p, 0o755);
       }
     } catch (e) {
