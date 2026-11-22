@@ -22,6 +22,8 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 
+require('./electron-gate.cjs')('aeon1609-electron-surfaces');
+
 let failures = 0;
 const check = (desc, cond, hint) => {
   if (cond) { console.log(`  ok    ${desc}`); return; }
