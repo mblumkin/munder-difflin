@@ -402,6 +402,40 @@ function gitCommandLine(args: string[]): string {
   return args.length > 8 ? `${args.slice(0, 8).join(' ')} (+${args.length - 8} more)` : args.join(' ');
 }
 
+/** AEON-3716: the POSIX `bin/runtime/node` shim. It prefers nvm's node for the
+ *  nearest .nvmrc (then nvm's default alias, then the newest nvm node) and runs
+ *  Electron as node only when no nvm node exists: a seat started with the bare
+ *  system PATH otherwise gets Electron's node (v24) under a repo pinned to 22.
+ *  Mirrors the hive's bin/runtime/hive-runtime-shim (AEON-3700). Never resolve
+ *  through PATH: this dir is on it, so `node` here would exec itself. */
+export function posixNodeShim(execPath: string): string {
+  return [
+    '#!/bin/sh',
+    'nvm_dir=${NVM_DIR:-$HOME/.nvm}',
+    'want=""',
+    'd=$(pwd -P)',
+    'while [ -n "$d" ]; do',
+    '  if [ -f "$d/.nvmrc" ]; then want=$(tr -d "[:space:]" < "$d/.nvmrc"); break; fi',
+    '  [ "$d" = / ] && break',
+    '  d=$(dirname "$d")',
+    'done',
+    // a failed `< file` redirect prints even with 2>/dev/null after it, so test first
+    'if [ -z "$want" ] && [ -f "$nvm_dir/alias/default" ]; then want=$(tr -d "[:space:]" < "$nvm_dir/alias/default"); fi',
+    'want=${want#v}',
+    'pick() {',
+    '  ls -1 "$nvm_dir/versions/node" 2>/dev/null | sed "s/^v//" | grep -E "^[0-9]+\\.[0-9]+\\.[0-9]+$" |',
+    '    awk -v w="$1" \'w == "" || index($0".", w".") == 1\' | sort -t. -k1,1n -k2,2n -k3,3n | tail -1',
+    '}',
+    'ver=$(pick "$want")',
+    '[ -n "$ver" ] || ver=$(pick "")',
+    'if [ -n "$ver" ] && [ -x "$nvm_dir/versions/node/v$ver/bin/node" ]; then',
+    '  exec "$nvm_dir/versions/node/v$ver/bin/node" "$@"',
+    'fi',
+    `ELECTRON_RUN_AS_NODE=1 exec "${execPath}" "$@"`,
+    ''
+  ].join('\n');
+}
+
 export class HiveManager {
   /**
    * @param getHome  Lazily resolve harnessHome so the hive follows config changes.
@@ -614,7 +648,7 @@ export class HiveManager {
         );
       } else {
         const p = join(dir, 'node');
-        writeFileSync(p, `#!/bin/sh\nELECTRON_RUN_AS_NODE=1 exec "${process.execPath}" "$@"\n`, 'utf8');
+        writeFileSync(p, posixNodeShim(process.execPath), 'utf8');
         chmodSync(p, 0o755);
       }
     } catch (e) {
@@ -791,11 +825,13 @@ export class HiveManager {
     // Set explicitly (undefined included) so a seat that changed provider drops a stale value.
     meta = { ...meta, role, startDir: this.codexStartDir(meta, dir) };
 
+    // Create only: an existing identity.md is the agent's own (authored roles and
+    // rules live there), and a respawn on every app start used to wipe it (AEON-3708).
     const identity = join(dir, 'identity.md');
-    writeFileSync(identity, this.identityText(meta), 'utf8'); // refresh on each spawn
+    if (!existsSync(identity)) writeFileSync(identity, this.identityText(meta), 'utf8');
 
     // W3 — bundled read-only skills: refresh the agent's .claude/skills/ from the
-    // app-resources skills/ dir on every spawn (same policy as identity.md), so an
+    // app-resources skills/ dir on every spawn, so an
     // agent always rides with the shipped safe skill set. Tolerant: a missing or
     // partial source dir is a no-op (Kevin populates the resource dir in lp-manifest).
     if (opts.skillsDir) this.copyBundledSkills(opts.skillsDir, join(dir, '.claude', 'skills'));
@@ -1064,8 +1100,9 @@ export class HiveManager {
     return { args, env };
   }
 
-  /** Update the durable job string (hire role) without respawning. Refreshes
-   *  registry.json + identity.md so the floor editor and the hive stay aligned. */
+  /** Update the durable job string (hire role) without respawning. Updates
+   *  registry.json and the Role line of identity.md so the floor editor and the
+   *  hive stay aligned. */
   patchAgentRole(id: string, role: string): { ok: boolean; error?: string } {
     const root = this.root();
     if (!root) return { ok: false, error: 'hive disabled' };
@@ -1080,7 +1117,17 @@ export class HiveManager {
       agent.lastSeen = Date.now();
       this.writeJson(join(root, 'registry.json'), reg);
       const identityPath = join(this.agentDir(id), 'identity.md');
-      writeFileSync(identityPath, this.identityText(agent), 'utf8');
+      // Touch the Role line only, so the rest of an authored file survives (AEON-3715):
+      // swap it, or insert it under the title (after the title's blank line) when absent.
+      const current = existsSync(identityPath) ? readFileSync(identityPath, 'utf8') : '';
+      const roleLine = `- Role: ${next}`;
+      let text = this.identityText(agent);
+      if (/^- Role: .*$/m.test(current)) text = current.replace(/^- Role: .*$/m, () => roleLine);
+      else if (current.trim()) {
+        const at = /^# .*\n(?:\r?\n)?/.exec(current)?.[0].length ?? 0;
+        text = current.slice(0, at) + roleLine + '\n' + current.slice(at);
+      }
+      writeFileSync(identityPath, text, 'utf8');
       this.appendLog({ kind: 'role', agentId: id, role: next });
       this.commit(`hive: role ${id}`, [join(root, 'registry.json'), identityPath]);
       return { ok: true };
@@ -1405,7 +1452,7 @@ export class HiveManager {
 
   /**
    * W3 — refresh an agent's bundled skills from the app-resources `skills/` dir.
-   * Mirrors `identity.md`: overwritten every spawn so the shipped safe set tracks
+   * Overwritten every spawn so the shipped safe set tracks
    * the app. Best-effort and fully tolerant — a missing/empty source dir is a no-op
    * (Kevin populates the resource dir in lp-manifest), and any IO error is swallowed
    * so skill provisioning can never block a spawn.
@@ -1567,8 +1614,7 @@ export class HiveManager {
         : [`- Working directory: ${meta.cwd}`]),
       meta.isGod ? '- You are the **god / orchestrator**. You run the floor — keep awareness of the whole team, delegate execution, and personally own only the important calls (decomposition, sign-offs, conflicts, integration), not the grunt work.' : '',
       meta.isGod ? '- Monitor the team with `fleet.json` (live per-agent status/tokens/cost/breaker) and `registry.json`; full command reference in `COMMANDS.md`. `claude agents` does NOT list your hive siblings.' : '',
-      ''
-    ].filter(Boolean).join('\n');
+    ].filter(Boolean).join('\n') + '\n';
   }
 
   /**
@@ -2405,8 +2451,8 @@ export class HiveManager {
       config += codexGuardHooksToml(readClaudeGuards());
       writeFileSync(join(home, 'config.toml'), config, 'utf8');
 
-      // The seat's tracked guide becomes this home's global AGENTS.md, refreshed per
-      // spawn like identity.md; a guide removed from the seat must not linger here.
+      // The seat's tracked guide becomes this home's global AGENTS.md, refreshed every
+      // spawn; a guide removed from the seat must not linger here.
       // A session that starts in `dir` already reads dir/AGENTS.md as a project doc
       // (Codex walks from the git root down to its start folder), so a copy here made
       // it read the guide twice (AEON-2096); only a seat starting elsewhere needs it.
@@ -3740,7 +3786,7 @@ file-based; the harness (main process) is the only thing that runs git and the
 only thing that moves messages between agents.
 
 ## Your workspace — \`agents/<your-id>/\`
-- \`identity.md\`  — who you are (read-only; the harness writes it).
+- \`identity.md\`  — who you are (the harness creates it and never overwrites it; yours to keep current).
 - \`memory.md\`    — your long-term memory. Read at the start of a task; append to it as you learn.
 - \`inbox/\`       — messages addressed to you. Read them at the start of a task.
 - \`inbox/.done/\` — move a message here once you've handled it.
