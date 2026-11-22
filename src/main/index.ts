@@ -74,6 +74,7 @@ import { resolveGodName } from '../shared/godIdentity';
 import { fetchHireManifest, readHireManifestFiles } from './hire';
 import { parseHireDeepLink, type HireManifest } from '../shared/hire';
 import { ClosingTimeController, fileControlStore } from './closingTime';
+import { codexLatestTurnFailure } from './providerTurn';
 import {
   argsWithAutoModeFlag,
   inferAgentProvider,
@@ -3893,7 +3894,16 @@ const closingTime = new ClosingTimeController(
   // at their next hook boundary instead of waiting for a Stop.
   control,
   // AEON-1761: STOP/RESUME control events persist under the hive root.
-  fileControlStore(() => hive.root())
+  fileControlStore(() => hive.root()),
+  // AEON-3709: a seat whose provider fails every turn cannot ACK.
+  // shortcut: Codex seats only (the provider seen failing); add others when one is.
+  (id, sinceMs) => {
+    const root = hive.root();
+    const a = hive.registry().agents[id];
+    return root && a?.provider === 'codex' && a.sessionId
+      ? codexLatestTurnFailure(join(root, 'agents', id), a.sessionId, sinceMs)
+      : null;
+  }
 );
 hive.setRoutedObserver((msg, targets) => closingTime.onRouted(msg, targets));
 ipcMain.handle('app:startClosingTime', () => closingTime.start());

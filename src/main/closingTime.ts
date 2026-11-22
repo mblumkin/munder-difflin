@@ -123,6 +123,7 @@ export class ClosingTimeController {
   private timeoutTimer: NodeJS.Timeout | null = null;
   private teardownTimer: NodeJS.Timeout | null = null;
   private launchResume: ControlEvent | null = null;
+  private startedAt = 0;
 
   constructor(
     private hive: HiveManager,
@@ -138,7 +139,11 @@ export class ClosingTimeController {
      *  their next hook boundary instead of waiting for the Stop-hook inbox
      *  drain — the graceful interrupt. Optional so tests can omit it. */
     private control?: ControlRegistry,
-    private store?: ControlStore
+    private store?: ControlStore,
+    /** AEON-3709: the failure text when `id`'s latest provider turn started at or
+     *  after `sinceMs` and failed, else null. Such a seat cannot ACK, so god may
+     *  conclude by naming it. Optional: without it every straggler is waited on. */
+    private latestTurnFailure?: (id: string, sinceMs: number) => string | null
   ) {
     control?.observeTakes((id, note) => this.noteTaken(id, note));
   }
@@ -262,6 +267,7 @@ export class ClosingTimeController {
     );
     this.acked = new Set();
     this.active = true;
+    this.startedAt = Date.now();
 
     const names = [...this.workers]
       .map((id) => `${reg.agents[id]?.name ?? id} (${id})`)
@@ -356,17 +362,36 @@ export class ClosingTimeController {
       const pending = [...this.workers].filter(
         (id) => !this.acked.has(id) && liveNow.has(id) && !reg.agents[id]?.archived
       );
-      if (pending.length > 0) {
-        const names = pending.map((id) => `${reg.agents[id]?.name ?? id} (${id})`).join(', ');
+      // A seat whose provider failed its latest turn since closing time began
+      // cannot ACK (AEON-3709: Pam, model_not_found). It is excused only when
+      // god's COMPLETE names it, so god takes responsibility for its state.
+      const label = (id: string) => `${reg.agents[id]?.name ?? id} (${id})`;
+      const failures = new Map<string, string>();
+      for (const id of pending) {
+        const failure = this.latestTurnFailure?.(id, this.startedAt);
+        if (failure) failures.set(id, failure);
+      }
+      const text = `${msg.subject}\n${msg.body}`;
+      const waiting = pending.filter((id) => !failures.has(id));
+      const unnamed = [...failures.keys()].filter((id) => !text.includes(id));
+      if (waiting.length > 0 || unnamed.length > 0) {
         this.hive.send({
           to: 'god',
           act: 'refuse',
           subject: 'CLOSING TIME — conclusion rejected, workers still missing',
           body: [
-            `The harness is still missing a CLOSING-TIME-ACK from: ${names}.`,
-            'The app stays open until every worker has confirmed its memory is saved.',
-            'Chase the stragglers (re-send the closing-time instruction to each), wait for their ACKs, then send CLOSING-TIME-COMPLETE again.'
-          ].join('\n')
+            waiting.length > 0
+              ? `The harness is still missing a CLOSING-TIME-ACK from: ${waiting.map(label).join(', ')}.`
+              : '',
+            ...[...failures].map(([id, failure]) =>
+              `${label(id)} cannot run: its latest provider turn since closing time began failed (${failure}), so its ACK cannot arrive.`),
+            waiting.length > 0
+              ? 'The app stays open until every worker has confirmed its memory is saved. Chase the stragglers (re-send the closing-time instruction to each), wait for their ACKs, then send CLOSING-TIME-COMPLETE again.'
+              : '',
+            failures.size > 0
+              ? `To close without a failing seat's ACK, send CLOSING-TIME-COMPLETE again naming ${[...failures.keys()].join(' and ')} in its body.`
+              : ''
+          ].filter(Boolean).join('\n')
         }, 'human');
         this.emitState('progress');
         return;
