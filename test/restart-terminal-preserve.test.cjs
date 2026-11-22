@@ -52,6 +52,8 @@ const { spawn, execSync } = require('node:child_process');
 
 const REPO = path.resolve(__dirname, '..');
 
+require('./electron-gate.cjs')('restart-terminal-preserve');
+
 if (process.platform !== 'win32' || !fs.existsSync(path.join(REPO, 'node_modules', 'electron'))) {
   console.log('  ok  (restart-terminal-preserve needs the repo\'s Electron binary; skipping elsewhere)');
   process.exit(0);

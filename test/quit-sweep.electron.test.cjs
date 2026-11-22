@@ -33,6 +33,8 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawn, execFileSync } = require('node:child_process');
 
+require('./electron-gate.cjs')('quit-sweep.electron');
+
 if (process.platform !== 'win32') {
   console.log('  ok  (non-win32: the synchronous quit sweep is Windows-only — POSIX quits HUP the group via pty closure)');
   process.exit(0);
