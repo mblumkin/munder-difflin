@@ -373,7 +373,9 @@ export class ClosingTimeController {
       }
       const text = `${msg.subject}\n${msg.body}`;
       const waiting = pending.filter((id) => !failures.has(id));
-      const unnamed = [...failures.keys()].filter((id) => !text.includes(id));
+      // Whole ids only: naming worker-ln-verify2 must not excuse worker-ln-verify.
+      const isNamed = (id: string) => new RegExp(`(^|[^\\w-])${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w-])`).test(text);
+      const unnamed = [...failures.keys()].filter((id) => !isNamed(id));
       if (waiting.length > 0 || unnamed.length > 0) {
         this.hive.send({
           to: 'god',

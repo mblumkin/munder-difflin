@@ -72,6 +72,26 @@ test('a COMPLETE naming the failing seat closes the app', (t) => {
   assert.equal(f.phases.at(-1), 'complete');
 });
 
+test('naming a longer id that starts with the failing id does not excuse it', (t) => {
+  const f = fixture(t, ['w-broken']);
+  f.controller.start();
+  f.route('w-ok', 'CLOSING-TIME-ACK');
+  f.route('god-1', 'CLOSING-TIME-COMPLETE', 'excusing w-broken2 and w-broken-old only');
+
+  assert.equal(refusals(f.sent).length, 1, 'w-broken2 is another seat; w-broken is not named');
+  assert.notEqual(f.phases.at(-1), 'complete');
+});
+
+test('a whole id at the end of a sentence counts as named', (t) => {
+  const f = fixture(t, ['w-broken']);
+  f.controller.start();
+  f.route('w-ok', 'CLOSING-TIME-ACK');
+  f.route('god-1', 'CLOSING-TIME-COMPLETE', 'Nothing at risk for w-broken.');
+
+  assert.equal(refusals(f.sent).length, 0);
+  assert.equal(f.phases.at(-1), 'complete');
+});
+
 test('a healthy straggler is still waited on even when named', (t) => {
   const f = fixture(t, ['w-broken']);
   f.controller.start();
