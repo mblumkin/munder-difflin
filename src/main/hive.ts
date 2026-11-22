@@ -791,8 +791,10 @@ export class HiveManager {
     // Set explicitly (undefined included) so a seat that changed provider drops a stale value.
     meta = { ...meta, role, startDir: this.codexStartDir(meta, dir) };
 
+    // Create only: an existing identity.md is the agent's own (authored roles and
+    // rules live there), and a respawn on every app start used to wipe it (AEON-3708).
     const identity = join(dir, 'identity.md');
-    writeFileSync(identity, this.identityText(meta), 'utf8'); // refresh on each spawn
+    if (!existsSync(identity)) writeFileSync(identity, this.identityText(meta), 'utf8');
 
     // W3 — bundled read-only skills: refresh the agent's .claude/skills/ from the
     // app-resources skills/ dir on every spawn (same policy as identity.md), so an
@@ -1080,7 +1082,11 @@ export class HiveManager {
       agent.lastSeen = Date.now();
       this.writeJson(join(root, 'registry.json'), reg);
       const identityPath = join(this.agentDir(id), 'identity.md');
-      writeFileSync(identityPath, this.identityText(agent), 'utf8');
+      // Swap the Role line only, so the rest of an authored file survives.
+      const current = existsSync(identityPath) ? readFileSync(identityPath, 'utf8') : '';
+      writeFileSync(identityPath, /^- Role: .*$/m.test(current)
+        ? current.replace(/^- Role: .*$/m, () => `- Role: ${next}`)
+        : this.identityText(agent), 'utf8');
       this.appendLog({ kind: 'role', agentId: id, role: next });
       this.commit(`hive: role ${id}`, [join(root, 'registry.json'), identityPath]);
       return { ok: true };
@@ -1567,8 +1573,7 @@ export class HiveManager {
         : [`- Working directory: ${meta.cwd}`]),
       meta.isGod ? '- You are the **god / orchestrator**. You run the floor — keep awareness of the whole team, delegate execution, and personally own only the important calls (decomposition, sign-offs, conflicts, integration), not the grunt work.' : '',
       meta.isGod ? '- Monitor the team with `fleet.json` (live per-agent status/tokens/cost/breaker) and `registry.json`; full command reference in `COMMANDS.md`. `claude agents` does NOT list your hive siblings.' : '',
-      ''
-    ].filter(Boolean).join('\n');
+    ].filter(Boolean).join('\n') + '\n';
   }
 
   /**
@@ -3740,7 +3745,7 @@ file-based; the harness (main process) is the only thing that runs git and the
 only thing that moves messages between agents.
 
 ## Your workspace — \`agents/<your-id>/\`
-- \`identity.md\`  — who you are (read-only; the harness writes it).
+- \`identity.md\`  — who you are (the harness creates it and never overwrites it; yours to keep current).
 - \`memory.md\`    — your long-term memory. Read at the start of a task; append to it as you learn.
 - \`inbox/\`       — messages addressed to you. Read them at the start of a task.
 - \`inbox/.done/\` — move a message here once you've handled it.
