@@ -16,6 +16,16 @@ const loadTs = require('./load-ts.cjs');
 
 const { HiveManager } = loadTs('src/main/hive.ts');
 
+// AEON-3715: codex agents resolve the user's Codex home via os.homedir(); keep it off the real ~/.codex.
+const realHome = process.env.HOME;
+const realProfile = process.env.USERPROFILE;
+process.env.HOME = process.env.USERPROFILE = fs.mkdtempSync(path.join(os.tmpdir(), 'md-aeon3708-home-'));
+assert.equal(os.homedir(), process.env.HOME, 'home redirect failed; aborting before touching the real home');
+test.after(() => {
+  if (realHome === undefined) delete process.env.HOME; else process.env.HOME = realHome;
+  if (realProfile === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = realProfile;
+});
+
 function setup(t) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'md-aeon3708-'));
   const hive = new HiveManager(() => home);
