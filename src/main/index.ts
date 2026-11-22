@@ -381,6 +381,7 @@ interface WorkerRec {
   baseBranch: string;     // the branch its worktree was cut from (for ahead-of-base)
   spawnedAt: number;      // epoch ms
   releasing?: boolean;    // kill issued; awaiting teardownPty (skip re-processing)
+  spentDoneAt?: number;   // newest done refused for unread god mail (AEON-3727); it no longer releases the worker
   /** Per-worker TOTAL-token cap from the spawn-request (overrides the config
    *  default). 0/undefined = no per-request cap. P4 plumbing — unlimited today. */
   tokenCap?: number;
@@ -4756,6 +4757,29 @@ function workerFollowUpAfter(workerId: string, doneAt: number): boolean {
   return false;
 }
 
+/** God requests and queries still unread in the worker's inbox, other than its own work order (conversation
+ *  `worker-<reqId>`, which it just completed). God often queues more work seconds before the worker's done; such a
+ *  request predates the done, so workerFollowUpAfter misses it and the release filed it unread (AEON-3727, five lost
+ *  on 2026-11-22). */
+function workerUnreadGodRequests(workerId: string, reqId: string): Array<{ id: string; subject: string }> {
+  const root = hive.root();
+  const dir = root ? join(root, 'agents', workerId, 'inbox') : '';
+  if (!dir || !existsSync(dir)) return [];
+  let files: string[];
+  try { files = readdirSync(dir); } catch { return []; }
+  const out: Array<{ id: string; subject: string }> = [];
+  for (const f of files) {
+    if (!f.endsWith('.json')) continue;
+    try {
+      const msg = JSON.parse(readFileSync(join(dir, f), 'utf8')) as { id?: string; from?: string; act?: string; conversation?: string; subject?: string };
+      if (msg.from === 'god' && (msg.act === 'request' || msg.act === 'query') && msg.conversation !== `worker-${reqId}`) {
+        out.push({ id: msg.id ?? f.replace(/\.json$/, ''), subject: msg.subject ?? '' });
+      }
+    } catch { /* skip unreadable/partial */ }
+  }
+  return out;
+}
+
 function workerDoneAt(workerId: string, spawnedAt: number): number | null {
   const root = hive.root();
   if (!root) return null;
@@ -5039,7 +5063,19 @@ async function ephemeralWorkerTick(): Promise<void> {
     //     worker-qa/worker-bizreview). A double teardown is a harmless no-op.
     for (const [workerId, rec] of [...liveWorkers]) {
       if (rec.releasing) continue;
-      const doneAt = workerDoneAt(workerId, rec.spawnedAt);
+      let doneAt = workerDoneAt(workerId, rec.spawnedAt);
+      // A done refused for unread god mail stays spent after that mail is filed: only a newer done releases.
+      if (doneAt !== null && rec.spentDoneAt !== undefined && doneAt <= rec.spentDoneAt) doneAt = null;
+      const unread = doneAt !== null ? workerUnreadGodRequests(workerId, rec.reqId) : [];
+      if (doneAt !== null && unread.length > 0) {
+        rec.spentDoneAt = doneAt;
+        doneAt = null;
+        const oneLine = (s: string): string => s.replace(/[\r\n]+/g, ' ');
+        const named = unread.map((m) => `${oneLine(m.id)} "${oneLine(m.subject)}"`).join(', ');
+        console.log(`[worker] ${workerId} signaled done with god mail unread (${named}); done refused`);
+        nudgeWorker(workerId, hive.registry().agents[workerId]?.provider, unread.map((m) => m.id),
+          `Your act:done was not accepted: god's ${named} is still unread in your inbox. Read it, act on it, move it to inbox/.done/, then send act:done again.`);
+      }
       const reengaged = doneAt !== null && workerFollowUpAfter(workerId, doneAt);
       if (doneAt !== null && !reengaged && Date.now() - doneAt < WORKER_DONE_GRACE_MS) continue;   // still reachable
       if (doneAt !== null && !reengaged) {
