@@ -1,4 +1,4 @@
-- **The board reads Backlog, To Do, Doing, Blocked, Ready, Done.**
-- **Ready has its own color and shows on the floor's To Do board.**
-- **Backlog shows its cards and no longer collapses.**
-- **The cost ledger rotates by date instead of growing past its cap.**
+- **Agents keep their identity.md across an app restart.**
+- **A role edit changes only the Role line.**
+- **Closing time finishes when god names a seat whose provider keeps failing.**
+- **Agent shells use your nvm Node, not Electron's.**

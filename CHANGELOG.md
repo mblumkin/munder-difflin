@@ -6,6 +6,23 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.5.28] - 2026-11-22 (local-only, not a public release)
+
+### Fixed
+
+- An agent's identity.md survives an app restart. The app wrote it again from the registry on
+  every spawn, so authored roles and rules were replaced on each start; it now writes the file
+  only when it is missing (AEON-3708).
+- Editing an agent's role changes only the Role line of its identity.md, or adds one under the
+  title when there is none, and keeps the rest of the file (AEON-3715).
+- Closing time can finish when a seat's provider fails every turn. The refusal names that seat
+  and its error, and a CLOSING-TIME-COMPLETE that names the seat by its full id closes the app.
+  A healthy seat that has not answered is still waited on (AEON-3709).
+- An agent shell started with the bare system PATH runs nvm's Node for the nearest .nvmrc, not
+  Electron's built-in Node. Electron is used only when no nvm Node is installed (AEON-3716).
+- The test suite no longer launches Electron unless MUNDER_ELECTRON_TESTS=1 is set, and tests
+  that create a Codex agent no longer write into the real ~/.codex (AEON-3713, AEON-3715).
+
 ## [0.5.27] - 2026-11-12 (local-only, not a public release)
 
 ### Changed
