@@ -9,7 +9,9 @@ function runGit(cwd: string, args: string[], timeoutMs = 8000): Promise<{
     const proc = spawn('git', args, { cwd });
     let stdout = '';
     let stderr = '';
+    let timedOut = false;
     const timer = setTimeout(() => {
+      timedOut = true;
       try { proc.kill('SIGKILL'); } catch { /* noop */ }
     }, timeoutMs);
     proc.stdout.on('data', d => { stdout += d.toString(); });
@@ -21,6 +23,7 @@ function runGit(cwd: string, args: string[], timeoutMs = 8000): Promise<{
     proc.on('close', code => {
       clearTimeout(timer);
       if (code === 0) resolve({ ok: true, stdout });
+      else if (timedOut) resolve({ ok: false, error: `git ${args[0]} killed after ${timeoutMs} ms` });
       else resolve({ ok: false, error: stderr.trim() || `git exited ${code}` });
     });
   });
@@ -257,17 +260,27 @@ function agentBranchFor(wtPath: string): string {
   return `agent/${slug}`;
 }
 
+const WORKTREE_ADD_TIMEOUT_MS = 5 * 60_000;
+
 /** Provision an isolated git worktree for an agent at `wtPath`, branching off
  *  `baseBranch`. Tries to create a fresh `agent/<id>` branch first; if that
  *  branch already exists, falls back to checking out `baseBranch` directly. */
 export async function addWorktree(
-  cwd: string, wtPath: string, baseBranch: string
+  cwd: string, wtPath: string, baseBranch: string, timeoutMs = WORKTREE_ADD_TIMEOUT_MS
 ): Promise<{ ok: boolean; error?: string }> {
   const branch = agentBranchFor(wtPath);
-  const fresh = await runGit(cwd, ['worktree', 'add', wtPath, '-b', branch, baseBranch]);
+  // A big repo's checkout (the hive: 30k files) outlives runGit's 8 s default; a SIGKILLed add leaves
+  // `.git/worktrees/<id>/locked` ("initializing") behind for good (AEON-3682).
+  const fresh = await runGit(cwd, ['worktree', 'add', wtPath, '-b', branch, baseBranch], timeoutMs);
   if (fresh.ok) return { ok: true };
+  if (fresh.error.includes('killed after')) {
+    // Double --force removes a locked tree; prune drops the admin dir if the path never appeared.
+    await runGit(cwd, ['worktree', 'remove', '--force', '--force', wtPath]);
+    await runGit(cwd, ['worktree', 'prune']);
+    return { ok: false, error: fresh.error };
+  }
   // Branch likely already exists (or the path is taken) — retry without -b.
-  const fallback = await runGit(cwd, ['worktree', 'add', wtPath, baseBranch]);
+  const fallback = await runGit(cwd, ['worktree', 'add', wtPath, baseBranch], timeoutMs);
   if (fallback.ok) return { ok: true };
   return { ok: false, error: fallback.error };
 }
