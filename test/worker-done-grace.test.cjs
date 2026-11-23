@@ -42,6 +42,7 @@ function harness(t) {
   const liveWorkers = new Map([[id, rec]]);
   const calls = { kill: [], teardown: [], notices: [] };
   const context = {
+    adoptRestoredWorkers: async () => {},   // AEON-3764 restart adoption: covered by worker-restart-adopt.test.cjs
     liveWorkers, workerTickRunning: false, preservedWorktrees: new Map(), lastGcSweepAt: clock, GC_SWEEP_MS: 60_000,
     process, Date: FakeDate, Set, Math, JSON,
     console: { log() {}, warn() {}, error(e) { throw e; } },
