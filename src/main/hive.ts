@@ -216,6 +216,9 @@ export interface SpawnInjection {
 }
 
 const HOP_CAP = 12;
+/** How far past its file's write time an outbox created_at may claim before the router restamps it (AEON-3670).
+ *  Matches bin/drift-check.py's TOLERANCE_SEC. */
+const FUTURE_CREATED_AT_SLACK_MS = 60_000;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -2045,7 +2048,28 @@ export class HiveManager {
           }
           const msg = this.normalize(partial, id);
           msg.from = id; // sender is authoritative — the owning directory
+          // AEON-3670: a hand-typed created_at ahead of the clock. The file's mtime is when it was really written.
+          const writtenAt = statSync(full).mtimeMs;
+          const typedAt = msg.created_at;
+          const restamp = Date.parse(typedAt) - writtenAt > FUTURE_CREATED_AT_SLACK_MS;
+          if (restamp) {
+            msg.created_at = new Date(writtenAt).toISOString();
+            this.appendLog({ kind: 'outbox-restamp', from: id, file: f, id: msg.id, created_at: typedAt, restamped: msg.created_at });
+          }
           this.routeMessage(msg);
+          if (restamp) {
+            this.routeMessage(this.normalize({
+              to: id,
+              act: 'inform',
+              in_reply_to: msg.id,
+              conversation: msg.conversation,
+              requires_reply: false,
+              subject: `[created_at restamped] ${msg.subject}`,
+              body: `Your message ${msg.id} carried created_at ${typedAt}, more than 60 s after the file was written `
+                + `(${msg.created_at}), so it was delivered with the write time instead. A typed timestamp is the `
+                + 'cause: send mail with bin/send.sh, which stamps the real time, instead of writing outbox JSON by hand.'
+            }, 'system'));
+          }
           renameSync(full, join(outbox, '.sent', f)); // archive, don't reprocess
           didWork = true;
           routed++;
