@@ -11,6 +11,7 @@ import { homedir } from 'node:os';
 import { request as httpsRequest } from 'node:https';
 import { PtyManager, type SpawnOptions } from './pty';
 import { shouldReapIdleWorker } from './workerHold';
+import { findWorkerHiring } from './workerRehydrate';
 import { describeUnpushed, forceRemainingDescendants, releaseWorkerQueueTickets, signalDescendants, unpushedWorkerBranches, workerQueueOwners, workerTicketName } from './workerProcesses';
 import { archiveWorkerScratchIfSafe } from './workerScratch';
 import { resolveCommand as resolveCliCommand, isSafeCommandName } from './shellEnv';
@@ -4909,9 +4910,9 @@ async function processSpawnRequest(filePath: string): Promise<void> {
   // the worker is invisible on the floor, never enters the roster, and after a
   // restart nothing offers to restore it. The card rides the normal agent
   // lifecycle from here — teardownPty broadcasts the matching archive. A card
-  // RESTORED after an app quit revives through the renderer's normal spawn path
-  // and never re-enters liveWorkers: ephemerality is a property of the hiring,
-  // not of the card, so a restored worker is a regular agent (no reaping).
+  // RESTORED after an app quit revives through the renderer's normal spawn path;
+  // adoptRestoredWorkers (AEON-3764) puts it back in liveWorkers from its archived
+  // spawn request, so done-release, idle reap and the token cap survive a restart.
   try {
     liveWebContents()?.send('hive:agentSpawned', {
       id: workerId,
@@ -5041,10 +5042,38 @@ function reapWorkerPty(workerId: string, spawnedAt: number): boolean {
 /** One controller tick: (1) finish/reap live workers (frees slots), then (2) pull
  *  new requests up to the concurrency cap. Order matters so a freed slot is reused
  *  the same tick. */
+/** Worker pty ids already looked up with no hiring found, so the archive is not re-read every tick. */
+const adoptChecked = new Set<string>();
+
+/** AEON-3764: liveWorkers is in memory only, so after an app restart the renderer restores a worker's card as a plain
+ *  agent: its done never released it, it was never idle- or token-reaped, and it did not count toward the cap. Each
+ *  live worker-* pty of a registered, unarchived agent that a spawn request hired goes back in, with that request's
+ *  time as spawnedAt so a done sent before the restart still counts. Runs inside the serialized tick, so it never
+ *  sees a spawn half done (pty up, liveWorkers not yet set, the old request still in .done). */
+async function adoptRestoredWorkers(): Promise<void> {
+  const queue = spawnRequestsDir();
+  if (!queue) return;
+  const agents = hive.registry().agents;
+  for (const { id } of ptyManager.list()) {
+    if (!id.startsWith('worker-') || liveWorkers.has(id) || adoptChecked.has(id)) continue;
+    const entry = agents[id];
+    if (!entry || entry.archived) continue;   // re-checked next tick: the registry can lag the pty
+    const hiring = findWorkerHiring(join(queue, '.done'), id);
+    if (!hiring) { adoptChecked.add(id); continue; }
+    let baseBranch = 'main';
+    try { const br = await getBranch(hiring.cwd); if ('current' in br && br.current) baseBranch = br.current; } catch { /* keep default */ }
+    if (liveWorkers.has(id)) continue;
+    liveWorkers.set(id, { workerId: id, reqId: hiring.reqId, name: hiring.name, slack: hiring.slack, baseBranch,
+      spawnedAt: hiring.spawnedAt, tokenCap: hiring.tokenCap });
+    console.log(`[worker] adopted restored ${id} (hired ${new Date(hiring.spawnedAt).toISOString()}, base=${baseBranch})`);
+  }
+}
+
 async function ephemeralWorkerTick(): Promise<void> {
   if (workerTickRunning) return;
   workerTickRunning = true;
   try {
+    await adoptRestoredWorkers();
     const cfg = readConfig();
     const maxWorkers = Math.max(1, cfg.maxConcurrentWorkers ?? 4);
     const idleTimeoutMs = Math.max(1, cfg.workerIdleTimeoutMinutes ?? 20) * 60_000;
