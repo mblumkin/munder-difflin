@@ -1,4 +1,3 @@
-- **Agents keep their identity.md across an app restart.**
-- **A role edit changes only the Role line.**
-- **Closing time finishes when god names a seat whose provider keeps failing.**
-- **Agent shells use your nvm Node, not Electron's.**
+- **New agent worktrees no longer stay locked after a slow checkout.**
+- **A worker with an unread request from god is not released.**
+- **A message stamped ahead of the clock gets the real time.**

@@ -6,6 +6,21 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.5.29] - 2026-11-23 (local-only, not a public release)
+
+### Fixed
+
+- A new agent's worktree no longer stays locked after a slow checkout. On a large repository,
+  `git worktree add` was killed at 8 s mid-checkout, which left the tree marked "locked
+  initializing" and the seat working in the shared directory. The add now has 5 minutes, and an
+  add that is killed anyway is cleaned up (AEON-3682).
+- A worker that reports done while a request from god sits unread in its inbox is not released.
+  The done is refused and a notice names the request to handle first; god's next assignment was
+  lost this way five times on 2026-11-22 (AEON-3727).
+- The router restamps an outbox message whose created_at runs more than 60 s ahead of the time
+  its file was written, logs the original time, and tells the sender to use bin/send.sh
+  (AEON-3670).
+
 ## [0.5.28] - 2026-11-22 (local-only, not a public release)
 
 ### Fixed
