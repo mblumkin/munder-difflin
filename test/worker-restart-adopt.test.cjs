@@ -56,7 +56,8 @@ function harness(t, { idleMs = 0, used = 0, registry } = {}) {
   const context = {
     liveWorkers, workerTickRunning: false, preservedWorktrees: new Map(), lastGcSweepAt: clock, GC_SWEEP_MS: 60_000,
     process, Date: FakeDate, Set, Map, Math, JSON, Object,
-    console: { log() {}, warn() {}, error(e) { throw e; } },
+    // The tick logs '[worker] tick error:', e: throw e itself, or a body missing from the vm hides behind that label.
+    console: { log() {}, warn() {}, error(label, e) { throw e ?? label; } },
     readConfig: () => ({ maxConcurrentWorkers: 4, workerIdleTimeoutMinutes: 20, orchestratorMaySpawn: false, defaultWorkerTokenCap: 0 }),
     hive: { root: () => root, registry: () => ({ agents: registry ?? Object.fromEntries(ptys.map((id) => [id, { id, archived: false }])) }),
       settleInbox: () => ({ moved: 0, kept: 0, unanswered: [] }) },
