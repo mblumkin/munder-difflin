@@ -409,28 +409,44 @@ function gitCommandLine(args: string[]): string {
  *  nearest .nvmrc (then nvm's default alias, then the newest nvm node) and runs
  *  Electron as node only when no nvm node exists: a seat started with the bare
  *  system PATH otherwise gets Electron's node (v24) under a repo pinned to 22.
- *  Mirrors the hive's bin/runtime/hive-runtime-shim (AEON-3700). Never resolve
- *  through PATH: this dir is on it, so `node` here would exec itself. */
+ *  Mirrors the hive's bin/runtime/hive-runtime-shim (AEON-3700): every read is
+ *  guarded with -r, a fallback from a wanted node prints one stderr line (AEON-3725),
+ *  and nvm's built-in aliases node/stable mean the newest installed node. Never
+ *  resolve through PATH: this dir is on it, so `node` here would exec itself. */
 export function posixNodeShim(execPath: string): string {
   return [
     '#!/bin/sh',
     'nvm_dir=${NVM_DIR:-$HOME/.nvm}',
-    'want=""',
+    'want="" src=""',
     'd=$(pwd -P)',
     'while [ -n "$d" ]; do',
-    '  if [ -f "$d/.nvmrc" ]; then want=$(tr -d "[:space:]" < "$d/.nvmrc"); break; fi',
+    '  if [ -f "$d/.nvmrc" ]; then',
+    // a failed `< file` redirect prints even with 2>/dev/null after it, so test -r first
+    '    if [ -r "$d/.nvmrc" ]; then want=$(tr -d "[:space:]" < "$d/.nvmrc"); src="$d/.nvmrc"',
+    '    else echo "bin/runtime/node: cannot read $d/.nvmrc; ignoring it" >&2; fi',
+    '    break',
+    '  fi',
     '  [ "$d" = / ] && break',
     '  d=$(dirname "$d")',
     'done',
-    // a failed `< file` redirect prints even with 2>/dev/null after it, so test first
-    'if [ -z "$want" ] && [ -f "$nvm_dir/alias/default" ]; then want=$(tr -d "[:space:]" < "$nvm_dir/alias/default"); fi',
+    'if [ -z "$want" ] && [ -r "$nvm_dir/alias/default" ]; then want=$(tr -d "[:space:]" < "$nvm_dir/alias/default"); src="$nvm_dir/alias/default"; fi',
+    'asked=$want',
+    // nvm aliases (default, lts/*, lts/<name>) are files naming a version or another alias
+    'hops=0',
+    'while [ -n "$want" ] && [ "$hops" -lt 5 ] && [ -r "$nvm_dir/alias/$want" ]; do want=$(tr -d "[:space:]" < "$nvm_dir/alias/$want"); hops=$((hops + 1)); done',
+    // nvm's built-ins: no alias file, both mean the newest installed node
+    'case "$want" in node|stable) want="" ;; esac',
     'want=${want#v}',
     'pick() {',
     '  ls -1 "$nvm_dir/versions/node" 2>/dev/null | sed "s/^v//" | grep -E "^[0-9]+\\.[0-9]+\\.[0-9]+$" |',
     '    awk -v w="$1" \'w == "" || index($0".", w".") == 1\' | sort -t. -k1,1n -k2,2n -k3,3n | tail -1',
     '}',
     'ver=$(pick "$want")',
-    '[ -n "$ver" ] || ver=$(pick "")',
+    'if [ -z "$ver" ] && [ -n "$want" ]; then',
+    '  ver=$(pick "")',
+    '  if [ -n "$ver" ]; then used="nvm node $ver"; else used="Electron as node"; fi',
+    '  echo "bin/runtime/node: $src wants node $asked, not installed in nvm ($nvm_dir); using $used" >&2',
+    'fi',
     'if [ -n "$ver" ] && [ -x "$nvm_dir/versions/node/v$ver/bin/node" ]; then',
     '  exec "$nvm_dir/versions/node/v$ver/bin/node" "$@"',
     'fi',
