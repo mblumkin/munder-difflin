@@ -16,7 +16,8 @@ const path = require('node:path');
 const vm = require('node:vm');
 const ts = require('typescript');
 
-const REQUIRED = ['WORKER_DONE_GRACE_MS', 'workerFollowUpAfter', 'workerDoneAt', 'reapWorkerPty', 'ephemeralWorkerTick'];
+// AEON-3727's ephemeralWorkerTick calls workerUnreadGodRequests; a body the vm lacks throws as '[worker] tick error:'.
+const REQUIRED = ['WORKER_DONE_GRACE_MS', 'workerFollowUpAfter', 'workerUnreadGodRequests', 'workerDoneAt', 'reapWorkerPty', 'ephemeralWorkerTick'];
 const OPTIONAL = ['adoptChecked', 'adoptRestoredWorkers'];
 const rehydratePath = path.resolve(__dirname, '..', 'src/main/workerRehydrate.ts');
 
