@@ -151,6 +151,7 @@ test('live worker tick respects spawn, hold and queue wait, then reaps descendan
   ticket('new.ticket', 'Fixture', 99999999, now + 60_000);
   ticket('other.ticket', 'Other', 88888888, now - 1000);
   const context = {
+    adoptRestoredWorkers: async () => {},   // AEON-3764 restart adoption: covered by worker-restart-adopt.test.cjs
     liveWorkers, workerTickRunning: false, preservedWorktrees: new Map(), lastGcSweepAt: now,
     GC_SWEEP_MS: 60_000, process, Date, Set, Math,
     console: { log() {}, warn() {}, error(error) { throw error; } },
