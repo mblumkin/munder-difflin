@@ -33,7 +33,7 @@ async function setup(t) {
   const run = (env, cwd = project, args = '--version') => {
     const r = spawnSync('/bin/sh', ['-c', `cd "${cwd}" && node ${args}`],
       { env: { PATH: `${BARE}:${hive.runtimeBinDir()}`, HOME: home, ...env }, encoding: 'utf8' });
-    return { status: r.status, out: `${r.stdout}${r.stderr}`.trim() };
+    return { status: r.status, out: `${r.stdout}${r.stderr}`.trim(), stdout: r.stdout.trim(), stderr: r.stderr.trim() };
   };
   return { home, project, plantNode, run, nvm: path.join(home, '.nvm') };
 }
@@ -75,4 +75,50 @@ test('no nvm node at all: falls back to Electron as node, which still runs', { s
   const r = run({}, undefined, `-p "process.version + ' ' + process.env.ELECTRON_RUN_AS_NODE"`);
   assert.equal(r.status, 0, r.out);
   assert.equal(r.out, `${process.version} 1`);
+});
+
+// AEON-3725: the shim answers the same question as the hive's bin/runtime/hive-runtime-shim,
+// so it falls back the same way: loudly, in one stderr line naming wanted vs used.
+test('an .nvmrc nvm cannot satisfy warns once, naming the wanted and the used node', { skip: !POSIX }, async (t) => {
+  const { home, plantNode, run, nvm } = await setup(t);
+  for (const v of ['20.11.0', '22.23.2']) plantNode(nvm, v);
+  const rc = path.join(home, 'repo', '.nvmrc');
+  fs.writeFileSync(rc, '18\n');
+  const r = run({});
+  assert.equal(r.stdout, 'nvm-node 22.23.2 ELECTRON_RUN_AS_NODE=unset --version');
+  assert.equal(r.stderr, `bin/runtime/node: ${fs.realpathSync(rc)} wants node 18, not installed in nvm (${nvm}); using nvm node 22.23.2`);
+  fs.writeFileSync(rc, '22\n');
+  assert.equal(run({}).stderr, '', 'a matched .nvmrc stays quiet');
+});
+
+test('no nvm node for a wanted version: the Electron fallback is named too', { skip: !POSIX }, async (t) => {
+  const { home, run } = await setup(t);
+  fs.writeFileSync(path.join(home, 'repo', '.nvmrc'), '22\n');
+  const r = run({});
+  assert.equal(r.status, 0, r.out);
+  assert.match(r.stderr, /wants node 22, not installed in nvm .*; using Electron as node$/);
+});
+
+test('an unreadable .nvmrc is named and skipped, never a raw "Permission denied"', { skip: !POSIX || process.getuid() === 0 }, async (t) => {
+  const { home, plantNode, run, nvm } = await setup(t);
+  for (const v of ['20.11.0', '22.23.2']) plantNode(nvm, v);
+  fs.mkdirSync(path.join(nvm, 'alias'), { recursive: true });
+  fs.writeFileSync(path.join(nvm, 'alias', 'default'), '20\n');
+  const rc = path.join(home, 'repo', '.nvmrc');
+  fs.writeFileSync(rc, '22\n', { mode: 0o000 });
+  const r = run({});
+  assert.equal(r.stdout, 'nvm-node 20.11.0 ELECTRON_RUN_AS_NODE=unset --version', 'falls through to the default alias');
+  assert.doesNotMatch(r.stderr, /Permission denied/);
+  assert.equal(r.stderr, `bin/runtime/node: cannot read ${fs.realpathSync(path.dirname(rc))}/.nvmrc; ignoring it`);
+});
+
+test('nvm\'s built-in aliases node and stable mean the newest installed node, quietly', { skip: !POSIX }, async (t) => {
+  const { home, plantNode, run, nvm } = await setup(t);
+  for (const v of ['20.11.0', '22.23.2', '24.1.0']) plantNode(nvm, v);
+  for (const alias of ['node', 'stable']) {
+    fs.writeFileSync(path.join(home, 'repo', '.nvmrc'), `${alias}\n`);
+    const r = run({});
+    assert.equal(r.stdout, 'nvm-node 24.1.0 ELECTRON_RUN_AS_NODE=unset --version', alias);
+    assert.equal(r.stderr, '', `${alias} is satisfied, so no fallback warning`);
+  }
 });
