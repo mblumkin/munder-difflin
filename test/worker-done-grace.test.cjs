@@ -15,7 +15,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const ts = require('typescript');
 
-const NAMES = ['WORKER_DONE_GRACE_MS', 'workerFollowUpAfter', 'workerDoneAt', 'reapWorkerPty', 'ephemeralWorkerTick'];
+const NAMES = ['WORKER_DONE_GRACE_MS', 'workerFollowUpAfter', 'workerUnreadGodRequests', 'workerDoneAt', 'reapWorkerPty', 'ephemeralWorkerTick'];
 
 function liveBodies() {
   const source = fs.readFileSync(path.resolve(__dirname, '..', 'src/main/index.ts'), 'utf8');
@@ -40,7 +40,7 @@ function harness(t) {
   const FakeDate = class extends Date { static now() { return clock; } };
   const rec = { workerId: id, reqId: 'r1', name: 'wcov', spawnedAt: clock - 600_000, releasing: false };
   const liveWorkers = new Map([[id, rec]]);
-  const calls = { kill: [], teardown: [], notices: [] };
+  const calls = { kill: [], teardown: [], notices: [], nudges: [] };
   const context = {
     liveWorkers, workerTickRunning: false, preservedWorktrees: new Map(), lastGcSweepAt: clock, GC_SWEEP_MS: 60_000,
     process, Date: FakeDate, Set, Math, JSON,
@@ -54,6 +54,7 @@ function harness(t) {
     workerQueueOwners: () => [], workerTicketName: () => 'wcov', releaseWorkerQueueTickets: () => 0,
     signalDescendants() {}, forceRemainingDescendants() {}, setTimeout: () => ({ unref() {} }),
     teardownPty: (pid) => calls.teardown.push(pid), informGod: (...a) => calls.notices.push(a),
+    nudgeWorker: (pid, provider, ids, notice) => calls.nudges.push({ pid, ids, notice }),
     describeUnpushed: () => '', unpushedWorkerBranches: () => [], workerWorktreesRoot: () => root,
   };
   const { ephemeralWorkerTick, WORKER_DONE_GRACE_MS } = vm.runInNewContext(liveBodies(), context);
@@ -63,7 +64,10 @@ function harness(t) {
     rec, calls, GRACE: WORKER_DONE_GRACE_MS, tick: ephemeralWorkerTick,
     now: () => clock, advance: (ms) => { clock += ms; },
     done: (name) => write('outbox/.sent', name, { from: id, to: 'god', act: 'done', created_at: at(clock) }),
-    fromGod: (name, dir = 'inbox') => write(dir, name, { from: 'god', to: id, act: 'request', created_at: at(clock) }),
+    fromGod: (name, dir = 'inbox', conversation = 'c-followup') =>
+      write(dir, name, { id: name, from: 'god', to: id, act: 'request', conversation, subject: `do ${name}`, created_at: at(clock) }),
+    file: (name) => fs.renameSync(path.join(root, 'agents', id, 'inbox', `${name}.json`),
+      path.join(root, 'agents', id, 'inbox', '.done', `${name}.json`)),
   };
 }
 
@@ -91,6 +95,7 @@ test('a god message inside the window reaches the worker and keeps it until its 
   await h.tick();
   assert.equal(h.rec.releasing, false, 'the follow-up re-engaged it; the old done does not release it');
   assert.deepEqual(h.calls.kill, []);
+  h.file('followup');   // it read the follow-up (filed on read) and answered it
   h.done('d2');   // it answered the follow-up and is done again
   h.advance(h.GRACE + 1000);
   await h.tick();
@@ -105,4 +110,40 @@ test('a follow-up the worker already filed under inbox/.done still counts', asyn
   h.advance(h.GRACE + 1000);
   await h.tick();
   assert.equal(h.rec.releasing, false);
+});
+
+// AEON-3727: god queues more work, and the worker's done lands 1 s later, before it read the request. The request
+// predates the done, so the created_at check alone let the release file it unread (five lost on 2026-11-22).
+test('a god request queued just before the done keeps the worker until it is read and a new done is sent', async (t) => {
+  const h = harness(t);
+  h.fromGod('late');
+  h.advance(1_000);
+  h.done('d1');
+  h.advance(h.GRACE + 1000);
+  await h.tick();
+  assert.equal(h.rec.releasing, false, 'released with god\'s request unread in its inbox');
+  assert.deepEqual(h.calls.kill, []);
+  assert.equal(h.calls.nudges.length, 1, 'the worker was not told its done was refused');
+  assert.deepEqual([...h.calls.nudges[0].ids], ['late']);
+  assert.match(h.calls.nudges[0].notice, /not accepted.*late "do late".*act:done again/);
+  await h.tick();
+  assert.equal(h.calls.nudges.length, 1, 'the refusal is typed once per done, not every tick');
+  h.file('late');   // the wake watchdog delivered it; the worker read and filed it
+  h.advance(30_000);
+  await h.tick();
+  assert.equal(h.rec.releasing, false, 'the done that raced the request still released it once the request was filed');
+  h.done('d2');
+  h.advance(h.GRACE + 1000);
+  await h.tick();
+  assert.equal(h.rec.releasing, true, 'its done after answering releases it after a fresh window');
+});
+
+test('its own unread work order does not hold a done worker', async (t) => {
+  const h = harness(t);
+  h.fromGod('order', 'inbox', 'worker-r1');
+  h.advance(60_000);
+  h.done('d1');
+  h.advance(h.GRACE + 1000);
+  await h.tick();
+  assert.equal(h.rec.releasing, true);
 });
