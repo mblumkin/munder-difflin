@@ -32,6 +32,37 @@ function tmpHome(prefix = 'md-hive-node-', root = os.tmpdir()) {
   return fs.mkdtempSync(path.join(root, prefix));
 }
 
+// macOS caps a Unix socket path (sun_path) at 104 bytes, and os.tmpdir() can be
+// /var/folders/... (too long) or a sandbox-only dir like /tmp/claude-501 where
+// bare /tmp is EPERM. Use os.tmpdir() whenever the deepest socket still fits.
+const SUN_PATH_MAX = 104;
+function socketRoot(prefix, tail, tmp = os.tmpdir()) {
+  return Buffer.byteLength(path.join(tmp, `${prefix}XXXXXX`, tail)) < SUN_PATH_MAX ? tmp : '/tmp';
+}
+
+// A sandboxed seat may refuse listen() on a Unix socket: that is the
+// environment, not the hook, so skip with the reason instead of going red.
+async function listenOrSkip(t, server, sock) {
+  try {
+    await new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(sock, resolve);
+    });
+    return true;
+  } catch (err) {
+    if (err.code !== 'EPERM' && err.code !== 'EACCES') throw err;
+    t.skip(`SKIP-ENV: listen(${sock}) refused with ${err.code}; this seat blocks Unix sockets`);
+    return false;
+  }
+}
+
+test('socketRoot honours a short TMPDIR and falls back to /tmp when the socket would not fit', () => {
+  const tail = 'harness space/hive/hooks.sock';
+  assert.equal(socketRoot('md-hive-node-', tail, '/tmp/claude-501'), '/tmp/claude-501');
+  const long = '/var/folders/zz/zyxvpxvq6csfxvn_n0000000000000/T/' + 'x'.repeat(40);
+  assert.equal(socketRoot('md-hive-node-', tail, long), '/tmp');
+});
+
 function isolatedHomes(t, prefix, root) {
   const base = tmpHome(prefix, root);
   const home = path.join(base, 'user');
@@ -184,7 +215,7 @@ test('Codex hook commands survive a hive path containing spaces', { skip: !POSIX
   // Keep this root short enough for macOS's Unix-domain socket path limit while
   // putting the literal space after a unique component. The shell's first token
   // is then guaranteed absent, which makes the exit-127 negative control stable.
-  const isolated = isolatedHomes(t, undefined, '/tmp');
+  const isolated = isolatedHomes(t, undefined, socketRoot('md-hive-node-', 'harness space/hive/hooks.sock'));
   const home = isolated.home;
   const harness = `${isolated.harness} space`;
   const hive = new HiveManager(() => harness);
@@ -216,10 +247,7 @@ test('Codex hook commands survive a hive path containing spaces', { skip: !POSIX
     conn.on('close', () => { if (buf) received.push(buf); });
     conn.write(JSON.stringify({ ok: true }) + '\n', () => conn.end());
   });
-  await new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(sock, resolve);
-  });
+  if (!(await listenOrSkip(t, server, sock))) return;
   t.after(() => server.close());
 
   const after = await run(commands[0], env);
@@ -231,7 +259,7 @@ test('Codex hook commands survive a hive path containing spaces', { skip: !POSIX
 test('POSIX Gemini and Antigravity hooks survive a hive path containing spaces', { skip: !POSIX }, async (t) => {
   // Keep the socket short enough for macOS sun_path while retaining a literal
   // space in the user-selected harness root.
-  const base = fs.mkdtempSync('/tmp/md-provider-space-');
+  const base = fs.mkdtempSync(path.join(socketRoot('md-provider-space-', 'harness space/hive/hooks.sock'), 'md-provider-space-'));
   const home = path.join(base, 'user');
   const harness = path.join(base, 'harness space');
   t.after(async () => { await hive.flushGit(); fs.rmSync(base, { recursive: true, force: true }); });
@@ -266,10 +294,7 @@ test('POSIX Gemini and Antigravity hooks survive a hive path containing spaces',
     conn.on('close', () => { if (buf) received.push(buf); });
     conn.write(JSON.stringify({ ok: true }) + '\n', () => conn.end());
   });
-  await new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(sock, resolve);
-  });
+  if (!(await listenOrSkip(t, server, sock))) return;
   t.after(() => server.close());
 
   for (const [provider, command] of providerCommands) {
@@ -433,7 +458,7 @@ test('Gemini gets isolated lifecycle settings and an interactive protocol seed',
 });
 
 test('a hook fires with NO node on PATH, and its payload reaches HIVE_SOCK', { skip: !POSIX }, async (t) => {
-  const home = tmpHome();
+  const home = tmpHome(undefined, socketRoot('md-hive-node-', 'hive/hooks.sock'));
   t.after(async () => { await hive.flushGit(); fs.rmSync(home, { recursive: true, force: true }); });
   const hive = new HiveManager(() => home);
   await hive.ensureAgent({ id: 'a1', name: 'A', provider: 'claude', cwd: home });
@@ -451,8 +476,8 @@ test('a hook fires with NO node on PATH, and its payload reaches HIVE_SOCK', { s
     conn.on('close', () => { if (buf) received.push(buf); });
     conn.write(JSON.stringify({ ok: true }) + '\n', () => conn.end());
   });
-  server.on('error', () => { /* keep a socket error out of the test process */ });
-  await new Promise((resolve) => server.listen(sock, resolve));
+  if (!(await listenOrSkip(t, server, sock))) return;
+  server.on('error', () => { /* keep a later socket error out of the test process */ });
   t.after(() => server.close());
 
   const env = { PATH: STRIPPED_PATH, HIVE_SOCK: sock, AGENT_ID: 'a1', HOME: home };
