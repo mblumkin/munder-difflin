@@ -10,7 +10,8 @@ import { join, resolve, sep, basename, dirname, isAbsolute } from 'node:path';
 import { homedir } from 'node:os';
 import { request as httpsRequest } from 'node:https';
 import { PtyManager, type SpawnOptions } from './pty';
-import { shouldReapIdleWorker, tokenCapNoticeDue, tokenCapNoticeText } from './workerHold';
+import { shouldReapIdleWorker } from './workerHold';
+import { autosaveWip, capReapDetail, capTick, sentHandoffInform, wrapCheck, type CapState } from './workerWrap';
 import { findWorkerHiring } from './workerRehydrate';
 import { describeUnpushed, forceRemainingDescendants, releaseWorkerQueueTickets, signalDescendants, unpushedWorkerBranches, workerQueueOwners, workerTicketName } from './workerProcesses';
 import { archiveWorkerScratchIfSafe } from './workerScratch';
@@ -386,8 +387,8 @@ interface WorkerRec {
   /** Per-worker TOTAL-token cap from the spawn-request (overrides the config
    *  default). 0/undefined = no per-request cap. P4 plumbing — unlimited today. */
   tokenCap?: number;
-  /** Token-cap notice thresholds already sent (AEON-3837). */
-  capNoticesSent?: number[];
+  /** Token-cap notices and WRAP state (AEON-3837). */
+  capState?: CapState;
 }
 /** Live ephemeral workers by id. Populated by the spawn-request watcher; consulted
  *  by teardownPty so a finished/crashed/reaped worker's worktree is PRESERVED (not
@@ -5178,25 +5179,40 @@ async function ephemeralWorkerTick(): Promise<void> {
       const tokenCap = (rec.tokenCap && rec.tokenCap > 0) ? rec.tokenCap : defaultTokenCap;
       if (tokenCap > 0) {
         const used = workerTokensUsed(workerId);
-        // AEON-3837: warn at 85% and 95%, before the reap below; the inbox write lands first.
-        const pct = tokenCapNoticeDue(used, tokenCap, rec.capNoticesSent ??= []);
-        if (pct !== null) {
-          try {
-            hive.send({ to: workerId, act: 'inform', ...tokenCapNoticeText(pct, used, tokenCap) }, 'ephemeral-worker');
-            hive.appendLog({ kind: 'token-cap-notice', agentId: workerId, pct, used, cap: tokenCap });
-          } catch (e) { console.error('[worker] token-cap notice failed:', e); }
-        }
-        if (used > tokenCap) {
-          if (!reapWorkerPty(workerId, rec.spawnedAt)) continue;
-          rec.releasing = true;
-          console.warn(`[worker] reaping ${workerId} — token cap (${used.toLocaleString()} > ${tokenCap.toLocaleString()})`);
-          informGod(
-            `[worker reaped — token cap] ${workerId}`,
-            `Worker ${workerId} used ${used.toLocaleString()} tokens (> its cap of ${tokenCap.toLocaleString()}) and was reaped. Any committed work on its branch is preserved for you. ${describeUnpushed(unpushedWorkerBranches(workerWorktreesRoot(), workerId))}`,
-            rec.slack
-          );
-          continue;
-        }
+        // AEON-3837: notices at 70% and 90%; at the cap a WRAP grace instead of a kill. The worker is
+        // reaped once its wrap check passes, or, when grace runs out, after its work is saved to refs/wip/.
+        const state = rec.capState ??= { sent: [] };
+        const wt = worktreePaths.get(workerId);
+        const root = hive.root();
+        const pending = capTick(state, used, tokenCap, Date.now(), {
+          notify: (n) => {
+            try {
+              hive.send({ to: workerId, act: 'inform', subject: n.subject, body: n.body }, 'ephemeral-worker');
+              hive.appendLog({ kind: 'token-cap-notice', agentId: workerId, subject: n.subject, used, cap: tokenCap });
+            } catch (e) { console.error('[worker] token-cap notice failed:', e); }
+          },
+          check: async () => !!wt && !!root && await wrapCheck(wt, rec.baseBranch,
+            () => workerDoneAt(workerId, rec.spawnedAt) !== null || sentHandoffInform(root, workerId, rec.spawnedAt)),
+          autosave: async () => {
+            if (!wt) return [];
+            const refs = await autosaveWip(wt, rec.baseBranch, workerId, Date.now());
+            if (refs.length > 0) hive.appendLog({ kind: 'reap-autosave', agentId: workerId, worktree: wt, refs });
+            return refs;
+          },
+          reap: (why, refs) => {
+            if (!reapWorkerPty(workerId, rec.spawnedAt)) { state.done = false; return; }
+            rec.releasing = true;
+            console.warn(`[worker] reaping ${workerId} — token cap (${used.toLocaleString()} > ${tokenCap.toLocaleString()}, ${why})`);
+            const saved = capReapDetail(why, refs, wt);
+            informGod(
+              `[worker reaped — token cap] ${workerId}`,
+              `Worker ${workerId} used ${used.toLocaleString()} tokens (> its cap of ${tokenCap.toLocaleString()}) and was reaped.${saved} Any committed work on its branch is preserved for you. ${describeUnpushed(unpushedWorkerBranches(workerWorktreesRoot(), workerId))}`,
+              rec.slack
+            );
+          }
+        });
+        if (pending) await pending;
+        if (used > tokenCap) continue;   // in WRAP: the idle reap below must not cut the grace short
       }
       const idleMs = ptyManager.idleFor(workerId);
       if (idleMs === undefined) continue; // PTY already gone; teardownPty cleans up
