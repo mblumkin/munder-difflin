@@ -223,7 +223,7 @@ export function SettingsModal({ config, onClose, initialSection }: SettingsModal
   // ─── v0.3.4 redesign: settings that were onboarding-trapped or UI-less ────
   const cfgX = config as HarnessConfig & {
     strongKeepalive?: boolean; audience?: string; autoMode?: boolean;
-    defaultModel?: string; maxTurns?: number; semanticMemory?: boolean;
+    defaultModel?: string; maxTurns?: number; semanticMemory?: boolean; maxConcurrentWorkers?: number;
   };
   /**
    * ONE SAVE BUTTON.
@@ -294,6 +294,13 @@ export function SettingsModal({ config, onClose, initialSection }: SettingsModal
     const next = !orchSpawnOn;
     setOrchSpawnOn(next);
     stage({ orchestratorMaySpawn: next } as Partial<HarnessConfig>);
+  };
+  // AEON-3615: the worker cap the spawn queue reads every tick (index.ts ephemeralWorkerTick); 1-16 as in realtimeActions.
+  const [workerCap, setWorkerCap] = useState<string>(String(cfgX.maxConcurrentWorkers ?? 4));
+  const changeWorkerCap = (v: string): void => {
+    setWorkerCap(v);
+    const n = Number(v);
+    if (Number.isInteger(n) && n >= 1 && n <= 16) stage({ maxConcurrentWorkers: n } as Partial<HarnessConfig>);
   };
   const [defaultModelSel, setDefaultModelSel] = useState<string>(cfgX.defaultModel ?? 'claude-fable-5');
   const saveDefaultModel = (id: string): void => {
@@ -1287,6 +1294,19 @@ export function SettingsModal({ config, onClose, initialSection }: SettingsModal
                             {orchSpawnOn ? `me and ${godName}` : 'only me'}
                           </PixelButton>
                         </div>
+                        <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginTop: 10 }}>
+                          <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                            <span style={{ fontSize: 13, lineHeight: '20px', color: 'var(--cth-ink-900)' }}>Workers at once</span>
+                            <span style={{ fontSize: 12, lineHeight: '16px', color: 'var(--cth-ink-500)' }}>
+                              At most this many workers run together (1 to 16). A further request waits in the queue until one finishes.
+                            </span>
+                          </span>
+                          <input
+                            type="number" min="1" max="16" step="1" value={workerCap}
+                            onChange={(e) => changeWorkerCap(e.target.value)}
+                            style={{ ...slackInputStyle, width: 72 }}
+                          />
+                        </label>
                       </div>
 
                       <div style={{ height: 1, background: 'var(--cth-ink-300)' }} />

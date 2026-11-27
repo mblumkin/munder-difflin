@@ -3959,6 +3959,11 @@ request is NOT failed or deleted, it waits in \`spawn-requests/\` and runs if th
 If a request of yours has sat there without moving, that is why, and it is a decision to raise with the
 human rather than retry. Route work to an agent already on the floor first either way.
 
+**It is capped.** At most \`maxConcurrentWorkers\` workers (default 4, Settings → Autonomy & Budgets →
+Workers at once) run together. While that many are running, a new request waits in \`spawn-requests/\`
+even with spawning switched on, and starts when one finishes. A wait with spawning on and that many
+workers live is the cap, not the switch.
+
 ## Semantic memory (optional — when \`mempalace\` is installed)
 When \`MEMPALACE_PALACE_PATH\` is set in your environment, the hive shares a
 searchable MemPalace and you have the \`mempalace\` CLI:
