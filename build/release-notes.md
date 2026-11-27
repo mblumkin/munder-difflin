@@ -1,3 +1,3 @@
-- **New agent worktrees no longer stay locked after a slow checkout.**
-- **A worker with an unread request from god is not released.**
-- **A message stamped ahead of the clock gets the real time.**
+- **Workers running when the app restarts are managed again.**
+- **A new worker's worktree gets packages it can run its tests with.**
+- **The agent shell says when no Node matches .nvmrc.**

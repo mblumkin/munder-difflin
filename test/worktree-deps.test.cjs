@@ -201,3 +201,98 @@ test('uses a Windows junction for the directory link', () => {
 
   assert.match(source, /process\.platform === ['"]win32['"] \? ['"]junction['"] :/);
 });
+
+// AEON-3751: the base checkout's node_modules was empty (or installed from a
+// stale lockfile), so a linked worktree could not require('typescript') and ran
+// no test. Link only deps that match the worktree's package-lock.json.
+const LOCK = {
+  lockfileVersion: 3,
+  packages: {
+    '': { name: 'app' },
+    'node_modules/typescript': { version: '5.6.3' },
+    'node_modules/@esbuild/linux-x64': { version: '0.21.5', optional: true }
+  }
+};
+
+function withLock(repo, wtRoot, name) {
+  const wtPath = addWorktree(repo, wtRoot, name);
+  fs.writeFileSync(path.join(wtPath, 'package-lock.json'), JSON.stringify(LOCK));
+  return wtPath;
+}
+
+function recordingInstall(result = { ok: true }) {
+  const calls = [];
+  const install = async (dir) => { calls.push(dir); return result; };
+  return { calls, install };
+}
+
+test('an empty base node_modules is never linked: the worktree installs its own deps', async () => {
+  const { repo, wtRoot } = makeHarness();
+  fs.mkdirSync(path.join(repo, 'node_modules'));
+  const wtPath = withLock(repo, wtRoot, 'agent-i');
+  const { calls, install } = recordingInstall();
+
+  const result = await linkWorktreeDeps(repo, wtPath, install);
+
+  assert.deepEqual(result, { ok: true, skipped: false, installed: true });
+  assert.deepEqual(calls, [wtPath], 'install runs in the worktree, never the base checkout');
+  assert.throws(() => fs.lstatSync(path.join(wtPath, 'node_modules')), /ENOENT/, 'no link to the empty base');
+});
+
+test('a base installed from another lockfile is not linked either', async () => {
+  const { repo, wtRoot } = makeHarness();
+  const base = path.join(repo, 'node_modules');
+  fs.mkdirSync(base);
+  fs.writeFileSync(path.join(base, '.package-lock.json'), JSON.stringify({
+    packages: { 'node_modules/typescript': { version: '5.4.0' } }
+  }));
+  const wtPath = withLock(repo, wtRoot, 'agent-j');
+  const { calls, install } = recordingInstall();
+
+  assert.deepEqual(await linkWorktreeDeps(repo, wtPath, install), { ok: true, skipped: false, installed: true });
+  assert.equal(calls.length, 1);
+});
+
+test('a base whose installed deps match the worktree lockfile is linked, optional absentees allowed', async () => {
+  const { repo, wtRoot } = makeHarness();
+  const base = path.join(repo, 'node_modules');
+  fs.mkdirSync(base);
+  fs.writeFileSync(path.join(base, '.package-lock.json'), JSON.stringify({
+    packages: { 'node_modules/typescript': { version: '5.6.3' } }
+  }));
+  const wtPath = withLock(repo, wtRoot, 'agent-k');
+  const { calls, install } = recordingInstall();
+
+  assert.deepEqual(await linkWorktreeDeps(repo, wtPath, install), { ok: true, skipped: false });
+  assert.deepEqual(calls, []);
+  assert.equal(fs.readlinkSync(path.join(wtPath, 'node_modules')), base);
+});
+
+test('a failed worktree install is reported loudly with the manual step', async () => {
+  const { repo, wtRoot } = makeHarness();
+  const wtPath = withLock(repo, wtRoot, 'agent-l');
+  const { install } = recordingInstall({ ok: false, error: 'spawn npm ENOENT' });
+
+  const result = await linkWorktreeDeps(repo, wtPath, install);
+
+  assert.equal(result.ok, false);
+  assert.match(result.error, /does not match .*package-lock\.json/);
+  assert.match(result.error, /npm ci --ignore-scripts/);
+  assert.match(result.error, /spawn npm ENOENT/);
+});
+
+// --ignore-scripts skips the repo's postinstall (tools/ensure-pty-perms.cjs), so
+// node-pty's prebuilt spawn-helper stays 644 and every pty spawn fails
+// "posix_spawnp failed". An install into the worktree must restore +x.
+test('a worktree install leaves node-pty spawn-helper executable', { skip: process.platform === 'win32' }, async () => {
+  const { repo, wtRoot } = makeHarness();
+  const wtPath = withLock(repo, wtRoot, 'agent-m');
+  const helpers = ['prebuilds/darwin-arm64', 'build/Release'].map((d) => path.join(wtPath, 'node_modules/node-pty', d, 'spawn-helper'));
+  const install = async (dir) => {
+    for (const h of helpers) { fs.mkdirSync(path.dirname(h), { recursive: true }); fs.writeFileSync(h, '', { mode: 0o644 }); }
+    return { ok: true, dir };
+  };
+
+  assert.deepEqual(await linkWorktreeDeps(repo, wtPath, install), { ok: true, skipped: false, installed: true });
+  for (const h of helpers) assert.equal(fs.statSync(h).mode & 0o111, 0o111, `${h} must be executable`);
+});

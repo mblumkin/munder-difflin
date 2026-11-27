@@ -6,6 +6,25 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.5.30] - 2026-11-26 (local-only, not a public release)
+
+### Fixed
+
+- Workers that were running when the app restarted are managed again. The app kept its worker
+  list in memory only, so after a restart such a worker's done never released it, the idle reaper
+  and token cap never fired, and it did not count toward the worker limit. Each tick now adopts
+  every live worker that a spawn request hired, and a done sent before the restart still counts
+  (AEON-3764).
+- A new worker's worktree can run its tests. Its node_modules was linked to the main checkout's,
+  which was empty. The link is now made only when the main checkout's packages match the
+  worktree's lockfile; otherwise the worktree gets its own install, node-pty's helper stays
+  executable, and a failed install names the manual step (AEON-3751).
+- The agent shell's Node shim says so when no installed Node matches .nvmrc, instead of quietly
+  using the newest one. An unreadable .nvmrc is named once and skipped, and node or stable in
+  .nvmrc means the newest installed Node (AEON-3725).
+- The hook socket tests pass in a sandboxed seat: they use the seat's temporary directory when
+  the socket path fits, and a refused listen is a named skip, not a failure (AEON-3722).
+
 ## [0.5.29] - 2026-11-23 (local-only, not a public release)
 
 ### Fixed
