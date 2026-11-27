@@ -24,3 +24,4 @@ export function shouldReapIdleWorker(
     return true; // absent or malformed marker cannot establish a live hold
   }
 }
+

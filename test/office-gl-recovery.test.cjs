@@ -209,3 +209,29 @@ test('recovery survives repeated losses across rebuilds, one budget per install'
   lose(canvas2); clock.runAll();
   assert.equal(rebuilds, 2);
 });
+
+// AEON-3369: after give-up the floor stayed dead for good once the GPU process came back (Mason, 2026-11-12: GPU
+// process restarted, renderer 3 days old, floor note until an app restart). Give-up now carries a slow re-arm.
+test('give-up re-arms on a slow backoff, and a floor whose GPU comes back recovers by itself', () => {
+  const err = new Error('This browser does not support WebGL. Try using the canvas renderer');
+  const plan = planInitFailure(err, DEFAULT_MAX_INIT_RETRIES);
+  assert.equal(plan.action, 'give-up');
+  assert.ok(plan.rearmMs >= 10_000, `re-arm too eager for a dead GPU: ${plan.rearmMs}`);
+
+  // Drive OfficeFloor's loop: a context is refused until 60 s in, then granted.
+  let clock = 0; let used = 0; let up = false; let notes = 0;
+  for (let attempts = 0; attempts < 50 && !up; attempts++) {
+    if (clock >= 60_000) { up = true; used = 0; break; }
+    const p = planInitFailure(err, used);
+    if (p.action === 'retry') { used = p.attempt; clock += p.delayMs; continue; }
+    assert.equal(p.action, 'give-up');
+    notes++;
+    clock += p.rearmMs;
+  }
+  assert.ok(up, 'the floor never came back once the GPU did');
+  assert.ok(notes >= 1, 'the test never reached give-up');
+
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src/renderer/src/scene/office/OfficeFloor.tsx'), 'utf8');
+  const giveUp = src.slice(src.indexOf("plan.action === 'give-up'"), src.indexOf("console.error('[OfficeFloor] init failed:'"));
+  assert.match(giveUp, /setTimeout\([\s\S]*setGlGeneration\([\s\S]*plan\.rearmMs\)/, 'the give-up branch does not schedule a rebuild');
+});

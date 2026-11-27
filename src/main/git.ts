@@ -264,7 +264,7 @@ const WORKTREE_ADD_TIMEOUT_MS = 5 * 60_000;
 
 /** Provision an isolated git worktree for an agent at `wtPath`, branching off
  *  `baseBranch`. Tries to create a fresh `agent/<id>` branch first; if that
- *  branch already exists, falls back to checking out `baseBranch` directly. */
+ *  branch already exists, checks it out (reset to `baseBranch` when merged). */
 export async function addWorktree(
   cwd: string, wtPath: string, baseBranch: string, timeoutMs = WORKTREE_ADD_TIMEOUT_MS
 ): Promise<{ ok: boolean; error?: string }> {
@@ -279,8 +279,12 @@ export async function addWorktree(
     await runGit(cwd, ['worktree', 'prune']);
     return { ok: false, error: fresh.error };
   }
-  // Branch likely already exists (or the path is taken) — retry without -b.
-  const fallback = await runGit(cwd, ['worktree', 'add', wtPath, baseBranch], timeoutMs);
+  // The branch survived an earlier spawn of this id (AEON-3757). Checking out baseBranch instead fails whenever
+  // base is checked out elsewhere, so reuse the branch: reset to base when it holds nothing base lacks, else as is.
+  const merged = await runGit(cwd, ['merge-base', '--is-ancestor', branch, baseBranch]);
+  const fallback = await runGit(cwd, merged.ok
+    ? ['worktree', 'add', '-B', branch, wtPath, baseBranch]
+    : ['worktree', 'add', wtPath, branch], timeoutMs);
   if (fallback.ok) return { ok: true };
   return { ok: false, error: fallback.error };
 }

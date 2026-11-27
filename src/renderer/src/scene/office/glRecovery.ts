@@ -111,6 +111,10 @@ export function installContextLossRecovery(
  *  Three at 1500ms covers a GPU process restart with room to spare. */
 export const DEFAULT_MAX_INIT_RETRIES = 3;
 
+/** After give-up, how long until one more attempt (AEON-3369). The budget stays spent, so each re-arm is a single
+ *  try: a GPU process that came back is picked up within this, and a dead one costs one attempt per period. */
+export const DEFAULT_REARM_MS = 30_000;
+
 /** Messages meaning "no context for you", across Pixi and Chromium wordings.
  *  Deliberately narrow: anything that is NOT recognised here is reported as the
  *  bug it probably is, rather than hidden behind several seconds of retries. */
@@ -136,8 +140,8 @@ export function isContextUnavailableError(err: unknown): boolean {
 export type InitFailurePlan =
   /** Wait `delayMs`, then build the scene again from scratch. */
   | { action: 'retry'; delayMs: number; attempt: number }
-  /** Out of budget: tell the user, in words, that the GPU is oversubscribed. */
-  | { action: 'give-up' }
+  /** Out of budget: tell the user, in words, that the GPU is oversubscribed, and try once more after `rearmMs`. */
+  | { action: 'give-up'; rearmMs: number }
   /** Not a context problem — show the error, it is a real failure. */
   | { action: 'report' };
 
@@ -146,11 +150,11 @@ export type InitFailurePlan =
 export function planInitFailure(
   err: unknown,
   attemptsUsed: number,
-  opts: { maxRetries?: number; delayMs?: number } = {}
+  opts: { maxRetries?: number; delayMs?: number; rearmMs?: number } = {}
 ): InitFailurePlan {
   if (!isContextUnavailableError(err)) return { action: 'report' };
   const max = opts.maxRetries ?? DEFAULT_MAX_INIT_RETRIES;
-  if (attemptsUsed >= max) return { action: 'give-up' };
+  if (attemptsUsed >= max) return { action: 'give-up', rearmMs: opts.rearmMs ?? DEFAULT_REARM_MS };
   // Same delay as a rebuild: a GPU process takes a moment to come back, and
   // asking again immediately just gets the same null.
   return { action: 'retry', delayMs: opts.delayMs ?? DEFAULT_REBUILD_DELAY_MS, attempt: attemptsUsed + 1 };

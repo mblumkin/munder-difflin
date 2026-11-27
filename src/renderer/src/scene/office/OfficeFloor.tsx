@@ -1746,6 +1746,10 @@ export function OfficeFloor() {
           'The GPU may still be restarting, or too many terminals are\n' +
           'using it at once. Close a few agent terminals, or restart\n' +
           'the app, to bring the floor back.'));
+        // AEON-3369: a GPU process that restarts later is never announced, so try again on a slow clock.
+        setTimeout(() => {
+          if (mountIdRef.current === mountId) setGlGeneration((n) => n + 1);
+        }, plan.rearmMs);
         return;
       }
 

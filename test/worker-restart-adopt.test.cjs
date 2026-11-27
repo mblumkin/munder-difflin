@@ -51,7 +51,7 @@ function harness(t, { idleMs = 0, used = 0, registry } = {}) {
   };
   const ptys = [];
   const liveWorkers = new Map();   // a restart: nothing in memory
-  const calls = { kill: [], teardown: [], notices: [] };
+  const calls = { kill: [], teardown: [], notices: [], inbox: [] };
   const rehydrate = fs.existsSync(rehydratePath) ? require('./load-ts.cjs')(rehydratePath) : {};
   const context = {
     liveWorkers, workerTickRunning: false, preservedWorktrees: new Map(), lastGcSweepAt: clock, GC_SWEEP_MS: 60_000,
@@ -72,7 +72,12 @@ function harness(t, { idleMs = 0, used = 0, registry } = {}) {
     signalDescendants() {}, forceRemainingDescendants() {}, setTimeout: () => ({ unref() {} }),
     teardownPty: (pid) => { calls.teardown.push(pid); liveWorkers.delete(pid); }, informGod: (...a) => calls.notices.push(a),
     describeUnpushed: () => '', unpushedWorkerBranches: () => [], workerWorktreesRoot: () => root,
+    // AEON-3837: the cap's WRAP state machine is the real one; the worker has no worktree here, so its check fails.
+    ...(({ capTick, capReapDetail }) => ({ capTick, capReapDetail }))(require('./load-ts.cjs')('src/main/workerWrap.ts')), worktreePaths: new Map(),
+    wrapCheck: async () => false, autosaveWip: async () => [], sentHandoffInform: () => false,
   };
+  context.hive.send = (m) => calls.inbox.push(m);
+  context.hive.appendLog = () => {};
   const { ephemeralWorkerTick, WORKER_DONE_GRACE_MS } = vm.runInNewContext(liveBodies(), context);
   return {
     root, liveWorkers, calls, ptys, hire, GRACE: WORKER_DONE_GRACE_MS, tick: ephemeralWorkerTick,
@@ -109,8 +114,13 @@ test('after a restart, the token cap from the spawn request is enforced', async 
   const capped = h.hire('w22-guards2', { tokenCap: 1_000_000 });
   h.ptys.push(capped);
   await h.tick();
-  assert.ok(h.calls.notices.some(([subject]) => subject === `[worker reaped — token cap] ${capped}`),
+  assert.deepEqual(h.calls.kill, [], 'AEON-3837: at the cap the worker gets a WRAP grace, not an instant kill');
+  assert.ok(h.calls.inbox.some((m) => m.to === capped && m.subject === 'Token cap reached: wrap now'),
     'the per-request token cap was not enforced after a restart');
+  h.advance(20 * 60_000);
+  await h.tick();
+  assert.ok(h.calls.notices.some(([subject]) => subject === `[worker reaped — token cap] ${capped}`),
+    'the per-request token cap was not enforced once the grace ran out');
 });
 
 test('control: only hired, unarchived worker ptys are adopted, with the spawn request\'s own time as spawnedAt', async (t) => {

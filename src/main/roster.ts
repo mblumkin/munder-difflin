@@ -215,3 +215,58 @@ export class RosterStore {
     } catch { /* a failed backup must never block the write */ }
   }
 }
+
+export interface RosterRegistryView {
+  /** The registry's archived flag for an id, or undefined when it has no entry. */
+  archived(id: string): boolean | undefined;
+  /** True while the id owns a live PTY in this process. */
+  live(id: string): boolean;
+  godId?: string | null;
+}
+
+/**
+ * Bring a roster snapshot into line with registry.json (AEON-3836).
+ *
+ * A finished worker row (worker-*) that the registry has archived and that owns
+ * no live PTY never stays a live or restorable row: it moves to `archived`, so no
+ * roster load or restore pass can respawn a released worker. Every startup also
+ * archives non-worker agents in the registry (archiveOrphanedAgents), so those
+ * keep their place and stay restorable. In the other direction, a row the app
+ * archived that the registry still has live is returned in `toArchive`, for the
+ * caller to archive through hive.setArchived (which writes registry.json and logs).
+ */
+export function reconcileRosterWithRegistry(
+  snap: RosterSnapshot, reg: RosterRegistryView
+): { snap: RosterSnapshot; toArchive: string[] } {
+  const idOf = (row: unknown): string | null => {
+    const id = row && typeof row === 'object' ? (row as { id?: unknown }).id : undefined;
+    return typeof id === 'string' && id ? id : null;
+  };
+  const retired = (row: unknown): boolean => {
+    const id = idOf(row);
+    return !!id && id.startsWith('worker-') && reg.archived(id) === true && !reg.live(id);
+  };
+  const moved = [...snap.agents, ...snap.restorable].filter(retired);
+  const toArchive: string[] = [];
+  for (const row of snap.archived) {
+    const id = idOf(row);
+    if (id && id !== reg.godId && reg.archived(id) === false && !reg.live(id) && !toArchive.includes(id)) toArchive.push(id);
+  }
+  if (moved.length === 0) return { snap, toArchive };
+  const movedIds = new Set(moved.map(idOf));
+  const archived = snap.archived.filter((row) => !movedIds.has(idOf(row)));
+  for (const row of moved) {
+    const { ptyId: _pty, carrying: _c, currentStation: _s, ...rest } = row as Record<string, unknown>;
+    if (!archived.some((r) => idOf(r) === idOf(row))) archived.push({ ...rest, archived: true, status: 'idle', action: 'archived' });
+  }
+  return {
+    snap: {
+      ...snap,
+      agents: snap.agents.filter((row) => !retired(row)),
+      restorable: snap.restorable.filter((row) => !retired(row)),
+      archived,
+      selectedId: snap.selectedId && movedIds.has(snap.selectedId) ? null : snap.selectedId
+    },
+    toArchive
+  };
+}

@@ -2065,9 +2065,14 @@ export class HiveManager {
           const msg = this.normalize(partial, id);
           msg.from = id; // sender is authoritative — the owning directory
           // AEON-3670: a hand-typed created_at ahead of the clock. The file's mtime is when it was really written.
+          // AEON-3758: an unparseable one too (NaN compares false, so it went out verbatim).
           const writtenAt = statSync(full).mtimeMs;
-          const typedAt = msg.created_at;
-          const restamp = Date.parse(typedAt) - writtenAt > FUTURE_CREATED_AT_SLACK_MS;
+          const typedAt = partial.created_at;
+          // A missing one is how app-written envelopes (stall pages, self mail) look: take the write time with no record
+          // or notice, or every page would send its sender a notice (god's self page landed twice, mail to human looped).
+          if (typedAt == null) msg.created_at = new Date(writtenAt).toISOString();
+          const typedMs = typeof typedAt === 'string' ? Date.parse(typedAt) : NaN;
+          const restamp = typedAt != null && (!Number.isFinite(typedMs) || typedMs - writtenAt > FUTURE_CREATED_AT_SLACK_MS);
           if (restamp) {
             msg.created_at = new Date(writtenAt).toISOString();
             this.appendLog({ kind: 'outbox-restamp', from: id, file: f, id: msg.id, created_at: typedAt, restamped: msg.created_at });
@@ -2081,8 +2086,10 @@ export class HiveManager {
               conversation: msg.conversation,
               requires_reply: false,
               subject: `[created_at restamped] ${msg.subject}`,
-              body: `Your message ${msg.id} carried created_at ${typedAt}, more than 60 s after the file was written `
-                + `(${msg.created_at}), so it was delivered with the write time instead. A typed timestamp is the `
+              body: `Your message ${msg.id} carried ${Number.isFinite(typedMs)
+                ? `created_at ${typedAt}, more than 60 s after the file was written`
+                : `an unreadable created_at ${JSON.stringify(typedAt)}`} `
+                + `(written ${msg.created_at}), so it was delivered with the write time instead. A typed timestamp is the `
                 + 'cause: send mail with bin/send.sh, which stamps the real time, instead of writing outbox JSON by hand.'
             }, 'system'));
           }
@@ -3098,11 +3105,15 @@ export class HiveManager {
   //
   // The gc still happens — this only stops it from outliving the command that
   // triggered it, which is what "single committer" was supposed to mean.
+  // Since AEON-3813 a commit starts no gc at all (gc.auto=0 below); packing is
+  // the maintenance gc's job, under its own long timeout.
   // Overridable like `bin()` in memory.ts — tests substitute all three to
   // drive a real (fake) child through the timeout/escalation path without
   // waiting 8 real seconds.
   private gitBin = 'git';
   private gitTimeoutMs = 8000;
+  /** The periodic maintenance gc packs the whole hive; 8 s killed it partway (AEON-3813). */
+  private maintenanceGcTimeoutMs = 10 * 60_000;
   private gitKillGraceMs = KILL_GRACE_MS;
 
   /** Async so the main thread keeps breathing during `add -A`/`gc` on a large
@@ -3145,14 +3156,18 @@ export class HiveManager {
    *  caller, passes through here. */
   private static readonly GIT_SHUTDOWN_ERROR = 'git: shutting down, refusing to spawn a new process';
 
-  private git(args: string[], cwd: string): Promise<{ ok: boolean; out: string; err: string }> {
+  // AEON-3813: gc.auto=0 and maintenance.auto=false stop a commit from starting
+  // an inline `gc --auto` that the 8 s timeout then kills partway (tmp_pack
+  // garbage, slow commits). The explicit maintenance `git gc` ignores gc.auto
+  // and passes its own long timeout.
+  private git(args: string[], cwd: string, timeoutMs = this.gitTimeoutMs): Promise<{ ok: boolean; out: string; err: string }> {
     if (this.gitShuttingDown) {
       return Promise.reject(new Error(HiveManager.GIT_SHUTDOWN_ERROR));
     }
     return new Promise((resolve) => {
       let proc: ChildProcess;
       try {
-        proc = spawn(this.gitBin, ['-c', 'commit.gpgsign=false', '-c', 'gc.autoDetach=false', '-c', 'user.name=Hive', '-c', 'user.email=hive@local', ...args], { cwd, detached: true });
+        proc = spawn(this.gitBin, ['-c', 'commit.gpgsign=false', '-c', 'gc.autoDetach=false', '-c', 'gc.auto=0', '-c', 'maintenance.auto=false', '-c', 'user.name=Hive', '-c', 'user.email=hive@local', ...args], { cwd, detached: true });
       } catch (e) {
         resolve({ ok: false, out: '', err: e instanceof Error ? e.message : String(e) });
         return;
@@ -3190,12 +3205,12 @@ export class HiveManager {
         }, this.gitKillGraceMs);
         escalation.unref?.();
         // Deliberately NOT settling here — wait for the real `close` below.
-      }, this.gitTimeoutMs);
+      }, timeoutMs);
       timer.unref?.();
       proc.on('close', (code) => {
         if (timedOut) {
           // AEON-2495: a timeout used to leave no trace, so a half-staged index had no cause on record.
-          try { this.appendLog({ kind: 'git-timeout', message: `git timed out after ${this.gitTimeoutMs} ms: git ${gitCommandLine(args)}` }); } catch { /* best-effort */ }
+          try { this.appendLog({ kind: 'git-timeout', message: `git timed out after ${timeoutMs} ms: git ${gitCommandLine(args)}` }); } catch { /* best-effort */ }
           settle({ ok: false, out, err: err || 'git timed out' });
           return;
         }
@@ -3760,7 +3775,7 @@ export class HiveManager {
     this.maintenanceGcInFlight = true;
     this.enqueueGit(async () => {
       try {
-        const result = await this.git(['gc'], root);
+        const result = await this.git(['gc'], root, this.maintenanceGcTimeoutMs);
         if (!result.ok) console.warn('[hive] maintenance gc failed:', result.err || result.out);
       } finally {
         this.maintenanceGcInFlight = false;
@@ -3954,6 +3969,11 @@ OFF by default, because every worker you start spends tokens nobody approved. Wh
 request is NOT failed or deleted, it waits in \`spawn-requests/\` and runs if the operator turns it on.
 If a request of yours has sat there without moving, that is why, and it is a decision to raise with the
 human rather than retry. Route work to an agent already on the floor first either way.
+
+**It is capped.** At most \`maxConcurrentWorkers\` workers (default 4, Settings → Autonomy & Budgets →
+Workers at once) run together. While that many are running, a new request waits in \`spawn-requests/\`
+even with spawning switched on, and starts when one finishes. A wait with spawning on and that many
+workers live is the cap, not the switch.
 
 ## Semantic memory (optional — when \`mempalace\` is installed)
 When \`MEMPALACE_PALACE_PATH\` is set in your environment, the hive shares a

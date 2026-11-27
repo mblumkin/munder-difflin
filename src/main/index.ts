@@ -11,6 +11,7 @@ import { homedir } from 'node:os';
 import { request as httpsRequest } from 'node:https';
 import { PtyManager, type SpawnOptions } from './pty';
 import { shouldReapIdleWorker } from './workerHold';
+import { autosaveWip, capReapDetail, capTick, sentHandoffInform, wrapCheck, type CapState } from './workerWrap';
 import { findWorkerHiring } from './workerRehydrate';
 import { describeUnpushed, forceRemainingDescendants, releaseWorkerQueueTickets, signalDescendants, unpushedWorkerBranches, workerQueueOwners, workerTicketName } from './workerProcesses';
 import { archiveWorkerScratchIfSafe } from './workerScratch';
@@ -65,7 +66,7 @@ import type { SpawnFailReason } from './analytics';
 import { IntegrationBroker } from './integrationBroker';
 import * as integrations from './integrations';
 import { validateBaseUrl, buildAuthHeaders, resolveUpstreamUrl, secretRefFor, INTEGRATION_TEMPLATES } from '../shared/integrations';
-import { RosterStore } from './roster';
+import { RosterStore, reconcileRosterWithRegistry, type RosterRegistryView, type RosterSnapshot } from './roster';
 import { buildWorkerLaunch, WORKER_COMPLETION_NOTE } from './workerLaunch';
 import { ControlRegistry } from './control';
 import { CONTROL_EVENT_PENDING_NUDGE, WorkerWakeWatchdog, WORKER_WAKE_REPORT_MS, activityEvidenceAt, fleetActivity, type WorkerWakeFacts } from './workerWake';
@@ -386,6 +387,8 @@ interface WorkerRec {
   /** Per-worker TOTAL-token cap from the spawn-request (overrides the config
    *  default). 0/undefined = no per-request cap. P4 plumbing — unlimited today. */
   tokenCap?: number;
+  /** Token-cap notices and WRAP state (AEON-3837). */
+  capState?: CapState;
 }
 /** Live ephemeral workers by id. Populated by the spawn-request watcher; consulted
  *  by teardownPty so a finished/crashed/reaped worker's worktree is PRESERVED (not
@@ -3512,10 +3515,35 @@ ipcMain.handle('git:checkout', async (_evt, cwd: unknown, ref: unknown, detach: 
 // round trip at boot, in exchange for the roster being correct on first paint
 // instead of flashing an empty floor and then filling in.
 // (`roster` itself is constructed earlier so HookServer can read standing goals.)
-ipcMain.on('roster:readSync', (evt) => { evt.returnValue = roster.read(); });
+// AEON-3836: every read and write is reconciled with registry.json, so a released
+// worker the registry archived never comes back as a live row, and an app archive
+// reaches registry.json and log.jsonl even when the row had no live PTY to tear down.
+function rosterRegistryView(): RosterRegistryView {
+  const reg = hive.enabled() ? hive.registry() : null;
+  return {
+    archived: (id) => { const a = reg?.agents[id]; return a ? !!a.archived : undefined; },
+    live: (id) => ptyForAgent(id) !== undefined || liveWorkers.has(id),
+    godId: reg?.godId ?? null
+  };
+}
+function reconciledRoster(): RosterSnapshot | null {
+  const snap = roster.read();
+  if (!snap) return null;
+  try { return reconcileRosterWithRegistry(snap, rosterRegistryView()).snap; }
+  catch (e) { console.error('[roster] reconcile on read failed:', e); return snap; }
+}
+ipcMain.on('roster:readSync', (evt) => { evt.returnValue = reconciledRoster(); });
 ipcMain.on('config:homeSync', (evt) => { evt.returnValue = readConfig().harnessHome ?? null; });
-ipcMain.handle('roster:read', () => roster.read());
-ipcMain.handle('roster:write', (_evt, snap: unknown) => roster.write(snap));
+ipcMain.handle('roster:read', () => reconciledRoster());
+ipcMain.handle('roster:write', (_evt, snap: unknown) => {
+  const s = snap as RosterSnapshot;
+  if (!s || !Array.isArray(s.agents) || !Array.isArray(s.archived) || !Array.isArray(s.restorable)) return roster.write(snap);
+  let out = { snap: s, toArchive: [] as string[] };
+  try { out = reconcileRosterWithRegistry(s, rosterRegistryView()); }
+  catch (e) { console.error('[roster] reconcile on write failed:', e); }
+  for (const id of out.toArchive) hive.setArchived(id, true);
+  return roster.write(out.snap);
+});
 
 // ─── IPC: hive (multi-agent coordination) ───────────────────────────────────
 ipcMain.handle('hive:registry', () => hive.registry());
@@ -5151,17 +5179,40 @@ async function ephemeralWorkerTick(): Promise<void> {
       const tokenCap = (rec.tokenCap && rec.tokenCap > 0) ? rec.tokenCap : defaultTokenCap;
       if (tokenCap > 0) {
         const used = workerTokensUsed(workerId);
-        if (used > tokenCap) {
-          if (!reapWorkerPty(workerId, rec.spawnedAt)) continue;
-          rec.releasing = true;
-          console.warn(`[worker] reaping ${workerId} — token cap (${used.toLocaleString()} > ${tokenCap.toLocaleString()})`);
-          informGod(
-            `[worker reaped — token cap] ${workerId}`,
-            `Worker ${workerId} used ${used.toLocaleString()} tokens (> its cap of ${tokenCap.toLocaleString()}) and was reaped. Any committed work on its branch is preserved for you. ${describeUnpushed(unpushedWorkerBranches(workerWorktreesRoot(), workerId))}`,
-            rec.slack
-          );
-          continue;
-        }
+        // AEON-3837: notices at 70% and 90%; at the cap a WRAP grace instead of a kill. The worker is
+        // reaped once its wrap check passes, or, when grace runs out, after its work is saved to refs/wip/.
+        const state = rec.capState ??= { sent: [] };
+        const wt = worktreePaths.get(workerId);
+        const root = hive.root();
+        const pending = capTick(state, used, tokenCap, Date.now(), {
+          notify: (n) => {
+            try {
+              hive.send({ to: workerId, act: 'inform', subject: n.subject, body: n.body }, 'ephemeral-worker');
+              hive.appendLog({ kind: 'token-cap-notice', agentId: workerId, subject: n.subject, used, cap: tokenCap });
+            } catch (e) { console.error('[worker] token-cap notice failed:', e); }
+          },
+          check: async () => !!wt && !!root && await wrapCheck(wt, rec.baseBranch,
+            () => workerDoneAt(workerId, rec.spawnedAt) !== null || sentHandoffInform(root, workerId, rec.spawnedAt)),
+          autosave: async () => {
+            if (!wt) return [];
+            const refs = await autosaveWip(wt, rec.baseBranch, workerId, Date.now());
+            if (refs.length > 0) hive.appendLog({ kind: 'reap-autosave', agentId: workerId, worktree: wt, refs });
+            return refs;
+          },
+          reap: (why, refs) => {
+            if (!reapWorkerPty(workerId, rec.spawnedAt)) { state.done = false; return; }
+            rec.releasing = true;
+            console.warn(`[worker] reaping ${workerId} — token cap (${used.toLocaleString()} > ${tokenCap.toLocaleString()}, ${why})`);
+            const saved = capReapDetail(why, refs, wt);
+            informGod(
+              `[worker reaped — token cap] ${workerId}`,
+              `Worker ${workerId} used ${used.toLocaleString()} tokens (> its cap of ${tokenCap.toLocaleString()}) and was reaped.${saved} Any committed work on its branch is preserved for you. ${describeUnpushed(unpushedWorkerBranches(workerWorktreesRoot(), workerId))}`,
+              rec.slack
+            );
+          }
+        });
+        if (pending) await pending;
+        if (used > tokenCap) continue;   // in WRAP: the idle reap below must not cut the grace short
       }
       const idleMs = ptyManager.idleFor(workerId);
       if (idleMs === undefined) continue; // PTY already gone; teardownPty cleans up
