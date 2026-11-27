@@ -65,7 +65,7 @@ import type { SpawnFailReason } from './analytics';
 import { IntegrationBroker } from './integrationBroker';
 import * as integrations from './integrations';
 import { validateBaseUrl, buildAuthHeaders, resolveUpstreamUrl, secretRefFor, INTEGRATION_TEMPLATES } from '../shared/integrations';
-import { RosterStore } from './roster';
+import { RosterStore, reconcileRosterWithRegistry, type RosterRegistryView, type RosterSnapshot } from './roster';
 import { buildWorkerLaunch, WORKER_COMPLETION_NOTE } from './workerLaunch';
 import { ControlRegistry } from './control';
 import { CONTROL_EVENT_PENDING_NUDGE, WorkerWakeWatchdog, WORKER_WAKE_REPORT_MS, activityEvidenceAt, fleetActivity, type WorkerWakeFacts } from './workerWake';
@@ -3512,10 +3512,35 @@ ipcMain.handle('git:checkout', async (_evt, cwd: unknown, ref: unknown, detach: 
 // round trip at boot, in exchange for the roster being correct on first paint
 // instead of flashing an empty floor and then filling in.
 // (`roster` itself is constructed earlier so HookServer can read standing goals.)
-ipcMain.on('roster:readSync', (evt) => { evt.returnValue = roster.read(); });
+// AEON-3836: every read and write is reconciled with registry.json, so a released
+// worker the registry archived never comes back as a live row, and an app archive
+// reaches registry.json and log.jsonl even when the row had no live PTY to tear down.
+function rosterRegistryView(): RosterRegistryView {
+  const reg = hive.enabled() ? hive.registry() : null;
+  return {
+    archived: (id) => { const a = reg?.agents[id]; return a ? !!a.archived : undefined; },
+    live: (id) => ptyForAgent(id) !== undefined || liveWorkers.has(id),
+    godId: reg?.godId ?? null
+  };
+}
+function reconciledRoster(): RosterSnapshot | null {
+  const snap = roster.read();
+  if (!snap) return null;
+  try { return reconcileRosterWithRegistry(snap, rosterRegistryView()).snap; }
+  catch (e) { console.error('[roster] reconcile on read failed:', e); return snap; }
+}
+ipcMain.on('roster:readSync', (evt) => { evt.returnValue = reconciledRoster(); });
 ipcMain.on('config:homeSync', (evt) => { evt.returnValue = readConfig().harnessHome ?? null; });
-ipcMain.handle('roster:read', () => roster.read());
-ipcMain.handle('roster:write', (_evt, snap: unknown) => roster.write(snap));
+ipcMain.handle('roster:read', () => reconciledRoster());
+ipcMain.handle('roster:write', (_evt, snap: unknown) => {
+  const s = snap as RosterSnapshot;
+  if (!s || !Array.isArray(s.agents) || !Array.isArray(s.archived) || !Array.isArray(s.restorable)) return roster.write(snap);
+  let out = { snap: s, toArchive: [] as string[] };
+  try { out = reconcileRosterWithRegistry(s, rosterRegistryView()); }
+  catch (e) { console.error('[roster] reconcile on write failed:', e); }
+  for (const id of out.toArchive) hive.setArchived(id, true);
+  return roster.write(out.snap);
+});
 
 // ─── IPC: hive (multi-agent coordination) ───────────────────────────────────
 ipcMain.handle('hive:registry', () => hive.registry());
