@@ -63,3 +63,27 @@ test('a message stamped at write time passes untouched', async (t) => {
   assert.equal(hive.logTail(200).some((e) => e.kind === 'outbox-restamp'), false);
   assert.equal(hive.inbox('dwight-1').length, 0);
 });
+
+// AEON-3758: an unparseable created_at made the check above NaN > 60000, false, so it was delivered verbatim; a missing
+// one was stamped with the route time. Both now take the file's write time with the same record and notice.
+for (const [label, extra] of [['an unparseable created_at', { created_at: 'not-a-date' }], ['a missing created_at', {}]]) {
+  test(`${label} is restamped to the file's write time, logged, and its sender told why`, async (t) => {
+    const { hive } = await floor(t);
+    const outFile = path.join(hive.root(), 'agents', 'dwight-1', 'outbox', 'bad1.json');
+    fs.writeFileSync(outFile, JSON.stringify({ id: 'bad1', to: 'god', act: 'inform', subject: 'odd stamp', body: 'b', ...extra }));
+    const written = new Date(Math.floor(Date.now() / 1000) * 1000 - 30_000); // whole seconds: utimes rounds sub-ms
+    fs.utimesSync(outFile, written, written);
+    hive.routeOnce();
+
+    const [got] = hive.inbox('god');
+    assert.equal(got.subject, 'odd stamp', 'the message itself must still be delivered');
+    assert.equal(got.created_at, written.toISOString());
+    const log = hive.logTail(200).find((e) => e.kind === 'outbox-restamp');
+    assert.ok(log, 'no outbox-restamp record in log.jsonl');
+    assert.equal(log.created_at, extra.created_at);
+    assert.equal(log.restamped, written.toISOString());
+    const notice = hive.inbox('dwight-1').find((m) => m.in_reply_to === 'bad1');
+    assert.ok(notice, 'the sender was not told its created_at was rewritten');
+    assert.match(notice.body, /send\.sh/);
+  });
+}
