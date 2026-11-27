@@ -24,3 +24,29 @@ export function shouldReapIdleWorker(
     return true; // absent or malformed marker cannot establish a live hold
   }
 }
+
+/** Shares of a worker's token cap at which it is told to hand off (AEON-3837). */
+export const TOKEN_CAP_NOTICE_PCTS = [85, 95] as const;
+
+/**
+ * The token-cap notice a worker is due this tick, or null. `sent` holds the
+ * thresholds already noticed and is updated in place, so each threshold is
+ * noticed once; a jump past both sends one notice, at the higher one.
+ */
+export function tokenCapNoticeDue(used: number, cap: number, sent: number[]): number | null {
+  if (!(cap > 0)) return null;
+  const crossed = TOKEN_CAP_NOTICE_PCTS.filter((p) => used >= cap * p / 100 && !sent.includes(p));
+  if (crossed.length === 0) return null;
+  sent.push(...crossed);
+  return crossed[crossed.length - 1];
+}
+
+export function tokenCapNoticeText(pct: number, used: number, cap: number): { subject: string; body: string } {
+  return {
+    subject: `Token cap ${pct}%: write HANDOFF.md now`,
+    body: `You have used ${used.toLocaleString('en-US')} of your ${cap.toLocaleString('en-US')} token cap (${pct}%). `
+      + 'The harness reaps you without further warning when you pass the cap. '
+      + 'Now: write wip/HANDOFF.md in your agent folder (what is done, what is not, where every uncommitted change is), '
+      + 'commit it with bin/hive-commit.sh, commit and push your branch, inform god, then stop.'
+  };
+}

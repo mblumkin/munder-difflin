@@ -10,7 +10,7 @@ import { join, resolve, sep, basename, dirname, isAbsolute } from 'node:path';
 import { homedir } from 'node:os';
 import { request as httpsRequest } from 'node:https';
 import { PtyManager, type SpawnOptions } from './pty';
-import { shouldReapIdleWorker } from './workerHold';
+import { shouldReapIdleWorker, tokenCapNoticeDue, tokenCapNoticeText } from './workerHold';
 import { findWorkerHiring } from './workerRehydrate';
 import { describeUnpushed, forceRemainingDescendants, releaseWorkerQueueTickets, signalDescendants, unpushedWorkerBranches, workerQueueOwners, workerTicketName } from './workerProcesses';
 import { archiveWorkerScratchIfSafe } from './workerScratch';
@@ -386,6 +386,8 @@ interface WorkerRec {
   /** Per-worker TOTAL-token cap from the spawn-request (overrides the config
    *  default). 0/undefined = no per-request cap. P4 plumbing — unlimited today. */
   tokenCap?: number;
+  /** Token-cap notice thresholds already sent (AEON-3837). */
+  capNoticesSent?: number[];
 }
 /** Live ephemeral workers by id. Populated by the spawn-request watcher; consulted
  *  by teardownPty so a finished/crashed/reaped worker's worktree is PRESERVED (not
@@ -5176,6 +5178,14 @@ async function ephemeralWorkerTick(): Promise<void> {
       const tokenCap = (rec.tokenCap && rec.tokenCap > 0) ? rec.tokenCap : defaultTokenCap;
       if (tokenCap > 0) {
         const used = workerTokensUsed(workerId);
+        // AEON-3837: warn at 85% and 95%, before the reap below; the inbox write lands first.
+        const pct = tokenCapNoticeDue(used, tokenCap, rec.capNoticesSent ??= []);
+        if (pct !== null) {
+          try {
+            hive.send({ to: workerId, act: 'inform', ...tokenCapNoticeText(pct, used, tokenCap) }, 'ephemeral-worker');
+            hive.appendLog({ kind: 'token-cap-notice', agentId: workerId, pct, used, cap: tokenCap });
+          } catch (e) { console.error('[worker] token-cap notice failed:', e); }
+        }
         if (used > tokenCap) {
           if (!reapWorkerPty(workerId, rec.spawnedAt)) continue;
           rec.releasing = true;
