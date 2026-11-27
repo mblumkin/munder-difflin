@@ -3102,11 +3102,15 @@ export class HiveManager {
   //
   // The gc still happens — this only stops it from outliving the command that
   // triggered it, which is what "single committer" was supposed to mean.
+  // Since AEON-3813 a commit starts no gc at all (gc.auto=0 below); packing is
+  // the maintenance gc's job, under its own long timeout.
   // Overridable like `bin()` in memory.ts — tests substitute all three to
   // drive a real (fake) child through the timeout/escalation path without
   // waiting 8 real seconds.
   private gitBin = 'git';
   private gitTimeoutMs = 8000;
+  /** The periodic maintenance gc packs the whole hive; 8 s killed it partway (AEON-3813). */
+  private maintenanceGcTimeoutMs = 10 * 60_000;
   private gitKillGraceMs = KILL_GRACE_MS;
 
   /** Async so the main thread keeps breathing during `add -A`/`gc` on a large
@@ -3149,14 +3153,18 @@ export class HiveManager {
    *  caller, passes through here. */
   private static readonly GIT_SHUTDOWN_ERROR = 'git: shutting down, refusing to spawn a new process';
 
-  private git(args: string[], cwd: string): Promise<{ ok: boolean; out: string; err: string }> {
+  // AEON-3813: gc.auto=0 and maintenance.auto=false stop a commit from starting
+  // an inline `gc --auto` that the 8 s timeout then kills partway (tmp_pack
+  // garbage, slow commits). The explicit maintenance `git gc` ignores gc.auto
+  // and passes its own long timeout.
+  private git(args: string[], cwd: string, timeoutMs = this.gitTimeoutMs): Promise<{ ok: boolean; out: string; err: string }> {
     if (this.gitShuttingDown) {
       return Promise.reject(new Error(HiveManager.GIT_SHUTDOWN_ERROR));
     }
     return new Promise((resolve) => {
       let proc: ChildProcess;
       try {
-        proc = spawn(this.gitBin, ['-c', 'commit.gpgsign=false', '-c', 'gc.autoDetach=false', '-c', 'user.name=Hive', '-c', 'user.email=hive@local', ...args], { cwd, detached: true });
+        proc = spawn(this.gitBin, ['-c', 'commit.gpgsign=false', '-c', 'gc.autoDetach=false', '-c', 'gc.auto=0', '-c', 'maintenance.auto=false', '-c', 'user.name=Hive', '-c', 'user.email=hive@local', ...args], { cwd, detached: true });
       } catch (e) {
         resolve({ ok: false, out: '', err: e instanceof Error ? e.message : String(e) });
         return;
@@ -3194,12 +3202,12 @@ export class HiveManager {
         }, this.gitKillGraceMs);
         escalation.unref?.();
         // Deliberately NOT settling here — wait for the real `close` below.
-      }, this.gitTimeoutMs);
+      }, timeoutMs);
       timer.unref?.();
       proc.on('close', (code) => {
         if (timedOut) {
           // AEON-2495: a timeout used to leave no trace, so a half-staged index had no cause on record.
-          try { this.appendLog({ kind: 'git-timeout', message: `git timed out after ${this.gitTimeoutMs} ms: git ${gitCommandLine(args)}` }); } catch { /* best-effort */ }
+          try { this.appendLog({ kind: 'git-timeout', message: `git timed out after ${timeoutMs} ms: git ${gitCommandLine(args)}` }); } catch { /* best-effort */ }
           settle({ ok: false, out, err: err || 'git timed out' });
           return;
         }
@@ -3764,7 +3772,7 @@ export class HiveManager {
     this.maintenanceGcInFlight = true;
     this.enqueueGit(async () => {
       try {
-        const result = await this.git(['gc'], root);
+        const result = await this.git(['gc'], root, this.maintenanceGcTimeoutMs);
         if (!result.ok) console.warn('[hive] maintenance gc failed:', result.err || result.out);
       } finally {
         this.maintenanceGcInFlight = false;
