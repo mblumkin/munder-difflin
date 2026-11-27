@@ -2065,11 +2065,14 @@ export class HiveManager {
           const msg = this.normalize(partial, id);
           msg.from = id; // sender is authoritative — the owning directory
           // AEON-3670: a hand-typed created_at ahead of the clock. The file's mtime is when it was really written.
-          // AEON-3758: a missing or unparseable one too (NaN compares false, and normalize filled a missing one with now).
+          // AEON-3758: an unparseable one too (NaN compares false, so it went out verbatim).
           const writtenAt = statSync(full).mtimeMs;
           const typedAt = partial.created_at;
+          // A missing one is how app-written envelopes (stall pages, self mail) look: take the write time with no record
+          // or notice, or every page would send its sender a notice (god's self page landed twice, mail to human looped).
+          if (typedAt == null) msg.created_at = new Date(writtenAt).toISOString();
           const typedMs = typeof typedAt === 'string' ? Date.parse(typedAt) : NaN;
-          const restamp = !Number.isFinite(typedMs) || typedMs - writtenAt > FUTURE_CREATED_AT_SLACK_MS;
+          const restamp = typedAt != null && (!Number.isFinite(typedMs) || typedMs - writtenAt > FUTURE_CREATED_AT_SLACK_MS);
           if (restamp) {
             msg.created_at = new Date(writtenAt).toISOString();
             this.appendLog({ kind: 'outbox-restamp', from: id, file: f, id: msg.id, created_at: typedAt, restamped: msg.created_at });
@@ -2085,7 +2088,7 @@ export class HiveManager {
               subject: `[created_at restamped] ${msg.subject}`,
               body: `Your message ${msg.id} carried ${Number.isFinite(typedMs)
                 ? `created_at ${typedAt}, more than 60 s after the file was written`
-                : `${typedAt === undefined ? 'no created_at' : `an unreadable created_at ${JSON.stringify(typedAt)}`}`} `
+                : `an unreadable created_at ${JSON.stringify(typedAt)}`} `
                 + `(written ${msg.created_at}), so it was delivered with the write time instead. A typed timestamp is the `
                 + 'cause: send mail with bin/send.sh, which stamps the real time, instead of writing outbox JSON by hand.'
             }, 'system'));
