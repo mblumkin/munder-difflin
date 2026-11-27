@@ -50,6 +50,21 @@ test('each urgent id is steered once, and again only after it left and came back
   assert.equal(w.takeUrgent(busy(), [urgent]).length, 1);
 });
 
+test('only god (by registry id) or the human may steer a worker mid-turn', () => {
+  const w = new WorkerWakeWatchdog();
+  const fromWorker = { ...urgent, id: 'm-w2', from: 'worker-w2' };
+  const fromHuman = { ...urgent, id: 'm-h', from: 'human' };
+  const fromNamedGod = { ...urgent, id: 'm-g', from: 'michael' };
+  assert.deepEqual(w.takeUrgent(busy(), [fromWorker, urgent, fromHuman]).map((m) => m.id), ['m-urgent', 'm-h']);
+  assert.deepEqual(w.takeUrgent(busy(), [fromNamedGod], 'michael').map((m) => m.id), ['m-g']);
+  assert.equal(w.takeUrgent(busy(), [{ ...urgent, id: 'm-x' }], 'michael').length, 0, "'god' is not god when the registry names another id");
+});
+
+test('the beat passes the registry god id to takeUrgent', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src/main/index.ts'), 'utf8');
+  assert.match(src, /workerWake\.takeUrgent\(f, mailByAgent\.get\(f\.agentId\) \?\? \[\], reg\.godId\)/);
+});
+
 test('god, a paused, halted or delivery-paused worker gets no urgent steer', () => {
   const w = new WorkerWakeWatchdog();
   for (const o of [{ isGod: true }, { paused: true }, { halted: true }, { autoDeliveryPaused: true }]) {

@@ -492,13 +492,17 @@ export class WorkerWakeWatchdog {
   /** Urgent messages to push into this worker mid-turn as steer notes (the
    *  hook channel delivers a steer at the next PostToolUse, so no turn end is
    *  needed). Each id is returned once; ids no longer in the inbox are
-   *  forgotten. God, a paused, halted or delivery-paused worker gets none. */
-  takeUrgent<M extends UrgentCandidate>(f: WorkerWakeFacts, mail: readonly M[]): M[] {
+   *  forgotten. God, a paused, halted or delivery-paused worker gets none.
+   *  Only god (the registry's godId) or the human may interrupt a turn: one
+   *  worker's URGENT subject must not steer another. `from` is trustworthy
+   *  because the router stamps it from the sender's own outbox directory. */
+  takeUrgent<M extends UrgentCandidate>(f: WorkerWakeFacts, mail: readonly M[], godId?: string | null): M[] {
     if (f.isGod || f.paused || f.halted || f.autoDeliveryPaused) return [];
     const live = new Set(mail.map((m) => m.id));
     const seen = this.steeredUrgentIds.get(f.agentId) ?? new Set<string>();
     for (const id of seen) if (!live.has(id)) seen.delete(id);
-    const out = mail.filter((m) => m.id && !seen.has(m.id) && isUrgentMessage(m));
+    const god = godId || 'god';
+    const out = mail.filter((m) => m.id && !seen.has(m.id) && (m.from === god || m.from === 'human') && isUrgentMessage(m));
     for (const m of out) seen.add(m.id);
     if (seen.size) this.steeredUrgentIds.set(f.agentId, seen); else this.steeredUrgentIds.delete(f.agentId);
     return out;

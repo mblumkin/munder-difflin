@@ -5505,7 +5505,7 @@ function runWorkerWakeBeat(): void {
   }
   // Urgent mail rides the hook channel at once, mid-turn included (AEON-3619).
   for (const f of facts) {
-    for (const m of workerWake.takeUrgent(f, mailByAgent.get(f.agentId) ?? [])) {
+    for (const m of workerWake.takeUrgent(f, mailByAgent.get(f.agentId) ?? [], reg.godId)) {
       control.steer(f.agentId, urgentSteerText(m));
       hive.appendLog({ kind: 'worker-wake', state: 'urgent-steer', agentId: f.agentId, id: m.id });
     }
