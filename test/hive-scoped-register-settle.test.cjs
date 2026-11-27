@@ -71,15 +71,16 @@ test('settling an inbox commits its log line, not the rest of the hive', async (
 test('a git command that times out is recorded in log.jsonl with the command', async (t) => {
   const { hive, root } = await hiveWithStrays(t);
   const slow = path.join(root, '..', 'slow-git.js');
-  fs.writeFileSync(slow, `#!${process.execPath}\nconst a = process.argv.slice(2);\nif (a.includes('commit')) setTimeout(() => {}, 5000);\nelse process.exit(require('child_process').spawnSync('git', a, { stdio: 'inherit' }).status ?? 1);\n`);
+  fs.writeFileSync(slow, `#!${process.execPath}\nconst a = process.argv.slice(2);\nif (a.includes('commit')) setTimeout(() => {}, 30000);\nelse process.exit(require('child_process').spawnSync('git', a, { stdio: 'inherit' }).status ?? 1);\n`);
   fs.chmodSync(slow, 0o755);
   hive.gitBin = slow;
-  hive.gitTimeoutMs = 300;
+  // Only commit hangs; the real git add before it must fit the window on a loaded box too (AEON-3398).
+  hive.gitTimeoutMs = 2000;
   hive.gitKillGraceMs = 200;
   hive.commit('hive: slow one', [path.join(root, 'stray-root.txt')]);
   await hive.flushGit();
   const events = fs.readFileSync(path.join(root, 'log.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
   const timeout = events.find((e) => e.kind === 'git-timeout');
   assert.ok(timeout, `no git-timeout event in log.jsonl: ${events.map((e) => e.kind).join(', ')}`);
-  assert.match(timeout.message, /git timed out after 300 ms: git .*commit -q -m hive: slow one/);
+  assert.match(timeout.message, /git timed out after 2000 ms: git .*commit -q -m hive: slow one/);
 });
