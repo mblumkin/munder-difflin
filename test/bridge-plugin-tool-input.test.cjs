@@ -33,6 +33,9 @@ const test = async (name, fn) => {
   try { await fn(); console.log(`  ok  ${name}`); } catch (e) { failures++; console.error(`FAIL  ${name}\n      ${e.message}`); }
 };
 
+// A sandboxed seat refuses listen() on a Unix socket: name it, do not go red.
+const socketSkip = require('./seat-env.cjs').unixSocket();
+if (socketSkip) { console.log(`  SKIP  bridge plugin round-trips: ${socketSkip}`); process.exit(0); }
 server.listen(sock, async () => {
   process.env.HIVE_SOCK = sock;
   process.env.AGENT_ID = 'probe';

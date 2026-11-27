@@ -11,6 +11,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { spawn } = require('node:child_process');
 const loadTs = require('./load-ts.cjs');
+const seat = require('./seat-env.cjs');
 
 const procs = loadTs('src/main/workerProcesses.ts');
 
@@ -44,7 +45,7 @@ test('a worker with no command in flight is not busy, so the idle reap still hap
   assert.equal(busy([child(102, "echo '/bin/zsh -c x'")]), false, 'a command that only mentions a shell is not one');
 });
 
-test('a real background shell under this process is seen through the real process table', async (t) => {
+test('a real background shell under this process is seen through the real process table', { skip: seat.processTable() }, async (t) => {
   if (process.platform === 'win32') return t.skip('ps ancestry is POSIX only');
   const sh = spawn('/bin/sh', ['-c', 'sleep 30; true'], { stdio: 'ignore' });
   t.after(() => { try { sh.kill('SIGKILL'); } catch (_) {} });

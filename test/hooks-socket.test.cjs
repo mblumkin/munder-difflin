@@ -22,6 +22,7 @@ const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
 const loadTs = require('./load-ts.cjs');
+const seat = require('./seat-env.cjs');
 
 const electron = require.resolve('electron');
 const toasts = [];
@@ -40,7 +41,7 @@ const { HiveManager } = loadTs('src/main/hive.ts');
 const { HookServer } = loadTs('src/main/hooks.ts');
 const CONFIG = { notifications: true };
 
-const posixOnly = { skip: process.platform === 'win32' ? 'named pipes have no socket file' : false };
+const posixOnly = { skip: process.platform === 'win32' ? 'named pipes have no socket file' : seat.unixSocket() };
 
 async function floor(t) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'mdh-'));
@@ -79,7 +80,7 @@ async function waitFor(fn, ms = 3000) {
   return false;
 }
 
-test('a successful bind is reported: log.jsonl, health, and a shim round-trip', async (t) => {
+test('a successful bind is reported: log.jsonl, health, and a shim round-trip', { skip: seat.unixSocket() }, async (t) => {
   const { hive, make, sock } = await floor(t);
   const a = make();
   a.start();
@@ -175,7 +176,7 @@ test('the beat never steals a socket another live server owns', posixOnly, async
   assert.equal(await roundTrip(sock), '{}');
 });
 
-test('a hive with no root yet is not silent, and binds once the root appears', async (t) => {
+test('a hive with no root yet is not silent, and binds once the root appears', { skip: seat.unixSocket() }, async (t) => {
   const { home } = await floor(t);
   const logs = [];
   let root = null;
