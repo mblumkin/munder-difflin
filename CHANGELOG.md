@@ -20,6 +20,11 @@ All notable changes to this project are documented here. The format is based on
   finds a tag with no update file under it. That now reads as no release, with no warning on the
   badge; a timeout, a network error or a broken feed still shows "update check failed"
   (AEON-3841).
+- An agent with its own worktree keeps its uncommitted work when it ends. A crash, a circuit
+  breaker stop, a Stop and a Restart all removed the worktree with `git worktree remove --force`,
+  deleting edits that were not committed yet. A worktree with uncommitted or untracked changes,
+  or one git cannot read, is now kept and god is told where it is; a clean one is removed as
+  before, and its commits stay on the agent's branch. Workers already had this rule (AEON-3843).
 
 ### Added
 
