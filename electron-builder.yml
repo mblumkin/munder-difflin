@@ -8,7 +8,7 @@ copyright: Copyright © 2026 Chaitanya Giri
 # knows which repo to poll.
 publish:
   provider: github
-  owner: chaitanyagiri
+  owner: mblumkin
   repo: munder-difflin
 
 # Bake the update toast's "What's new" list straight into latest*.yml.
