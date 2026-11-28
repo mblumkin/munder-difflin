@@ -1,3 +1,3 @@
-- **Workers running when the app restarts are managed again.**
-- **A new worker's worktree gets packages it can run its tests with.**
-- **The agent shell says when no Node matches .nvmrc.**
+- **The updater asks this fork, and stays quiet when there is nothing to install.**
+- **New Claude and GPT models: Fable 5.2, GPT-6.2 Sol and GPT-6.2 Astra.**
+- **New Grok, Kimi and Qwen models: Grok 4.7, Kimi K3.1 Pro and Qwen 3.7.**

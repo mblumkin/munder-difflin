@@ -6,6 +6,29 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.5.33] - 2026-11-28 (local-only, not a public release)
+
+### Fixed
+
+- The updater asks this fork, not the upstream project. The app's update feed, its release
+  notes lookup and its release links all named chaitanyagiri/munder-difflin, a separate product
+  line whose version numbers overlap ours: a release published there could have been offered to
+  this install, and "What's new" after an update asked upstream for our version's notes, so it
+  never had any (20 updates in a row in updater.log, from 0.5.3 in September). They now name mblumkin/munder-difflin
+  (AEON-3841).
+- A repo with nothing to install is quiet. The fork publishes tags, not installers, so a check
+  finds a tag with no update file under it. That now reads as no release, with no warning on the
+  badge; a timeout, a network error or a broken feed still shows "update check failed"
+  (AEON-3841).
+
+### Added
+
+- Model pickers offer the models upstream added in November: Claude Fable 5.2, GPT-6.1 Sol,
+  GPT-6.2 Astra and GPT-6.2 Sol, Grok 4.7, Kimi K3.1 Pro, Qwen 3.5 to 3.7, and the newer
+  OpenCode, Crush, Pi and Copilot rows. 125 rows in all, in both the built-in list and the list
+  the app fetches from the fork. The 15 Claude 4.x rows among them were left out, as AEON-2586
+  dropped 4.x from the pickers (AEON-3842).
+
 ## [0.5.30] - 2026-11-26 (local-only, not a public release)
 
 ### Fixed
