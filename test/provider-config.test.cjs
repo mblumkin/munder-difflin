@@ -120,17 +120,20 @@ test('model picker options stay provider-specific', () => {
   );
   assert.deepEqual(
     modelsForProvider('codex').map((model) => model.id),
-    [undefined, 'gpt-6-astra', 'gpt-6-sol', 'gpt-5.6-sol', 'gpt-6.1-terra', 'gpt-6-terra', 'gpt-5.6-terra', 'gpt-6-luna', 'gpt-5.6-luna']
+    [undefined, 'gpt-6.2-astra', 'gpt-6-astra', 'gpt-6.2-sol', 'gpt-6.1-sol', 'gpt-6-sol', 'gpt-5.6-sol', 'gpt-6.1-terra', 'gpt-6-terra', 'gpt-5.6-terra', 'gpt-6-luna', 'gpt-5.6-luna']
   );
   assert.deepEqual(
     modelsForProvider('grok').map((model) => model.id),
-    [undefined, 'grok-4.6', 'grok-4.5']
+    [undefined, 'grok-4.7', 'grok-4.7-build-fast', 'grok-4.6', 'grok-4.5']
   );
   assert.deepEqual(
     modelsForProvider('kimi').map((model) => model.id),
     [
       undefined,
+      'kimi-code/k3.1-pro',
+      'kimi-code/k3.1-pro-highspeed',
       'kimi-code/k3',
+      'kimi-code/k3-256k',
       'kimi-code/kimi-for-coding',
       'kimi-code/kimi-for-coding-highspeed'
     ]
