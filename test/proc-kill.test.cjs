@@ -49,7 +49,10 @@ function spawnStubbornTree() {
 }
 
 let failures = 0;
-async function test(name, fn) {
+// A test that reads the process table names the seat's denial instead of failing.
+const seat = require('./seat-env.cjs');
+async function test(name, fn, skip = false) {
+  if (skip) { console.log(`  SKIP  ${name}: ${skip}`); return; }
   try { await fn(); console.log(`  ok  ${name}`); }
   catch (e) { failures++; console.error(`FAIL  ${name}\n      ${e.message}`); }
 }
@@ -72,7 +75,7 @@ async function test(name, fn) {
     hardKillTree(pid);
     await sleep(300);
     assert.deepEqual(groupPids(pid), [], 'group should be empty');
-  });
+  }, seat.processTable());
 
   await test('SIGHUP alone does NOT kill the stubborn leader (the leak)', async () => {
     const pid = spawnStubbornTree();
@@ -119,7 +122,7 @@ async function test(name, fn) {
     assert.ok(members.size >= 2, `expected leader+child, saw ${members.size}`);
     for (const started of members.values()) assert.ok(started.length > 0, 'every member carries a start time');
     hardKillTree(pid); // cleanup
-  });
+  }, seat.processTable());
 
   await test('ensureKilled never group-kills a stranger group that inherited the pgid (T1007)', async () => {
     // Deterministic pid reuse cannot be forced, so prove the guard at its seam:
@@ -136,7 +139,7 @@ async function test(name, fn) {
     hardKillTree(b); // cleanup
     // And the live path stays intact: with the guard active, a genuinely
     // surviving group is still reaped (covered by the escalation test above).
-  });
+  }, seat.processTable());
 
   process.exit(failures ? 1 : 0);
 })();

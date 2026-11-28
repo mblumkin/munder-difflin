@@ -20,6 +20,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const loadTs = require('./load-ts.cjs');
+const seat = require('./seat-env.cjs');
 
 // config.ts pulls app.getPath('userData') from electron; outside Electron that
 // resolve gives a path string, so seed the cache with a temp userData dir.
@@ -36,7 +37,7 @@ const { ensureHarnessHome, writeConfig, readConfig } = loadTs('src/main/config.t
 
 const HOME = os.homedir();
 
-test('ensureHarnessHome creates a tilde path on disk (issue #140)', (t) => {
+test('ensureHarnessHome creates a tilde path on disk (issue #140)', { skip: seat.homeWrite() }, (t) => {
   const name = `md-harness-home-${process.pid}`;
   t.after(() => fs.rmSync(path.join(HOME, name), { recursive: true, force: true }));
   const res = ensureHarnessHome(`~/${name}`);

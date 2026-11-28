@@ -12,6 +12,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const loadTs = require('./load-ts.cjs');
+const seat = require('./seat-env.cjs');
 
 const { expandTilde, statAbs } = loadTs('src/main/fs.ts');
 
@@ -115,7 +116,7 @@ test('#140: both entry points agree on the same directory', () => {
   assert.equal(expandTilde(typed), normalizeHiveHome(typed).home);
 });
 
-test('statAbs expands bare ~, Windows-style ~\\, and whitespace paths', async () => {
+test('statAbs expands bare ~, Windows-style ~\\, and whitespace paths', { skip: seat.homeWrite() }, async () => {
   const fileBasename = `.md-statabs-${process.pid}`;
   const inHome = path.join(HOME, fileBasename);
   fs.writeFileSync(inHome, 'x');

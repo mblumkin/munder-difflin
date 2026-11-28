@@ -69,7 +69,7 @@ import { validateBaseUrl, buildAuthHeaders, resolveUpstreamUrl, secretRefFor, IN
 import { RosterStore, reconcileRosterWithRegistry, type RosterRegistryView, type RosterSnapshot } from './roster';
 import { buildWorkerLaunch, WORKER_COMPLETION_NOTE } from './workerLaunch';
 import { ControlRegistry } from './control';
-import { CONTROL_EVENT_PENDING_NUDGE, WorkerWakeWatchdog, WORKER_WAKE_REPORT_MS, activityEvidenceAt, fleetActivity, type WorkerWakeFacts } from './workerWake';
+import { CONTROL_EVENT_PENDING_NUDGE, WorkerWakeWatchdog, WORKER_WAKE_REPORT_MS, activityEvidenceAt, fleetActivity, urgentSteerText, type WorkerWakeFacts } from './workerWake';
 import { inboxNudgeText } from '../shared/hiveNudge';
 import { PTY_SUBMIT_ENTER_DELAY_MS, ptySubmitPayload } from '../shared/ptySubmit';
 import { resolveGodName } from '../shared/godIdentity';
@@ -5464,12 +5464,14 @@ function runWorkerWakeBeat(): void {
   if (!reg?.agents || !reg.godId) return;
   const now = Date.now();
   const facts: WorkerWakeFacts[] = [];
+  const mailByAgent = new Map<string, ReturnType<typeof hive.inbox>>();
   for (const [agentId, a] of Object.entries(reg.agents)) {
     if (a?.archived) continue;
     const ptyId = ptyForAgent(agentId);
     if (!ptyId) continue;
     const snap = control.snapshot(agentId);
     const mail = hive.inbox(agentId);
+    mailByAgent.set(agentId, mail);
     // Oldest pending message: the stall rule measures how long the worker has
     // ignored its mail, and telemetry says whether it has done ANY turn since.
     let oldestMailAt = 0;
@@ -5500,6 +5502,13 @@ function runWorkerWakeBeat(): void {
       hasTelemetry: usage !== null,
       oldestMailAt
     });
+  }
+  // Urgent mail rides the hook channel at once, mid-turn included (AEON-3619).
+  for (const f of facts) {
+    for (const m of workerWake.takeUrgent(f, mailByAgent.get(f.agentId) ?? [], reg.godId)) {
+      control.steer(f.agentId, urgentSteerText(m));
+      hive.appendLog({ kind: 'worker-wake', state: 'urgent-steer', agentId: f.agentId, id: m.id });
+    }
   }
   const nudged = new Set(workerWake.decide(facts, now));
   // A typed wake the CLI never took as a prompt (AEON-2660): its ids are back in

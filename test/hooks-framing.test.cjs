@@ -8,6 +8,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { once } = require('node:events');
 const loadTs = require('./load-ts.cjs');
+const seat = require('./seat-env.cjs');
 
 const electron = require.resolve('electron');
 require.cache[electron] = {
@@ -98,7 +99,7 @@ function splitInside(frame, character) {
   return start + 1;
 }
 
-test('CJK payload survives a split inside a multibyte code point', async (t) => {
+test('CJK payload survives a split inside a multibyte code point', { skip: seat.unixSocket() }, async (t) => {
   const { sock, routed } = await openServer(t);
   const payload = { message: '靽桀儔皜祈岫' };
   const frame = Buffer.from(`${JSON.stringify(payload)}\n`, 'utf8');
@@ -110,7 +111,7 @@ test('CJK payload survives a split inside a multibyte code point', async (t) => 
   assert.deepEqual(routed, [payload]);
 });
 
-test('emoji payload survives a split inside a four-byte code point', async (t) => {
+test('emoji payload survives a split inside a four-byte code point', { skip: seat.unixSocket() }, async (t) => {
   const { sock, routed } = await openServer(t);
   const payload = { message: 'deploy 🚀 ready' };
   const frame = Buffer.from(`${JSON.stringify(payload)}\n`, 'utf8');
@@ -122,7 +123,7 @@ test('emoji payload survives a split inside a four-byte code point', async (t) =
   assert.deepEqual(routed, [payload]);
 });
 
-test('ordinary fragmented frame retains existing one-request behavior', async (t) => {
+test('ordinary fragmented frame retains existing one-request behavior', { skip: seat.unixSocket() }, async (t) => {
   const { sock, routed } = await openServer(t);
   const payload = { hook_event_name: 'Stop', message: 'plain ASCII' };
   const frame = Buffer.from(`${JSON.stringify(payload)}\n`, 'utf8');
@@ -138,7 +139,7 @@ test('ordinary fragmented frame retains existing one-request behavior', async (t
   assert.equal(result.response, '{}');
 });
 
-test('oversized incomplete frame is rejected without routing a payload', async (t) => {
+test('oversized incomplete frame is rejected without routing a payload', { skip: seat.unixSocket() }, async (t) => {
   const { sock, routed, logs } = await openServer(t);
 
   const result = await sendChunks(sock, [Buffer.alloc(MAX_HOOK_FRAME_BYTES + 1, 0x78)], 0, 400);
@@ -156,7 +157,7 @@ test('oversized incomplete frame is rejected without routing a payload', async (
   }]);
 });
 
-test('payload exactly at the byte limit is accepted', async (t) => {
+test('payload exactly at the byte limit is accepted', { skip: seat.unixSocket() }, async (t) => {
   const { sock, routed } = await openServer(t);
   const frame = framedPayloadWithByteLength(MAX_HOOK_FRAME_BYTES);
 
@@ -168,7 +169,7 @@ test('payload exactly at the byte limit is accepted', async (t) => {
   assert.equal(result.response, '{}');
 });
 
-test('payload one byte above the limit is rejected', async (t) => {
+test('payload one byte above the limit is rejected', { skip: seat.unixSocket() }, async (t) => {
   const { sock, routed, logs } = await openServer(t);
   const frame = framedPayloadWithByteLength(MAX_HOOK_FRAME_BYTES + 1);
 
@@ -194,7 +195,7 @@ function oversizedCliFrame(head) {
   return Buffer.from(`${body}\n`, 'utf8');
 }
 
-test('an oversized frame is attributed through its session to the agent that owns it', async (t) => {
+test('an oversized frame is attributed through its session to the agent that owns it', { skip: seat.unixSocket() }, async (t) => {
   const { sock, routed, logs, server } = await openServer(t);
   // handle() is stubbed here, so seed the session map a real earlier frame would have filled.
   server.sessionAgents.set('sess-1', 'jim-mstom791');
@@ -211,7 +212,7 @@ test('an oversized frame is attributed through its session to the agent that own
   assert.equal(entry.tool, 'Bash');
 });
 
-test('an oversized frame from an unknown session still names its session and event', async (t) => {
+test('an oversized frame from an unknown session still names its session and event', { skip: seat.unixSocket() }, async (t) => {
   const { sock, logs } = await openServer(t);
   const frame = oversizedCliFrame({ session_id: 'sess-unknown', hook_event_name: 'PreToolUse' });
 

@@ -86,7 +86,7 @@ test('CLAUDE_CONFIG_DIR is honoured the way Claude Code honours it', () => {
 
 const codexBin = spawnSync('sh', ['-c', 'command -v codex'], { env: { ...process.env, HOME: realHome } }).stdout.toString().trim();
 
-test('live codex: a denied command never runs and the reason reaches the model', { skip: !codexBin && 'codex CLI not installed' }, async () => {
+test('live codex: a denied command never runs and the reason reaches the model', { skip: (!codexBin && 'codex CLI not installed') || require('./seat-env.cjs').nestedSandbox() }, async () => {
   const agentDir = fs.mkdtempSync(path.join(home, 'agent-'));
   const work = fs.mkdtempSync(path.join(home, 'work-'));
   const hive = new HiveManager(() => home);

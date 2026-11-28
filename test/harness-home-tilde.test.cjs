@@ -15,6 +15,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const loadTs = require('./load-ts.cjs');
+const seat = require('./seat-env.cjs');
 
 // config.ts pulls `app` from electron for its userData path; outside Electron
 // that resolve gives a path string, so seed the cache with the surface it
@@ -48,7 +49,7 @@ test('readConfig serves a pre-fix config with every ~ expanded (the upgrade path
   assert.ok(!JSON.stringify(cfg.recentHives).includes('~'), 'no consumer ever sees a ~ path');
 });
 
-test('ensureHarnessHome expands ~ before mkdir (issue #140)', () => {
+test('ensureHarnessHome expands ~ before mkdir (issue #140)', { skip: seat.homeWrite() }, () => {
   const rel = `.md-issue140-test-${process.pid}`;
   const target = path.join(os.homedir(), rel);
   const literalTilde = path.join(process.cwd(), '~');

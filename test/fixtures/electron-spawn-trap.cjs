@@ -28,3 +28,5 @@ cp.spawn = trap(cp.spawn);
 cp.spawnSync = trap(cp.spawnSync);
 cp.execFile = trap(cp.execFile);
 cp.execFileSync = trap(cp.execFileSync);
+cp.exec = trap(cp.exec);
+cp.execSync = trap(cp.execSync);

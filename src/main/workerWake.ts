@@ -223,6 +223,32 @@ export function fleetActivity(usageTs: number | null | undefined, turnHookAt: nu
   };
 }
 
+/** The fields of an inbox message the urgent rule reads. */
+export interface UrgentCandidate {
+  id: string;
+  from?: string;
+  subject?: string;
+  body?: string;
+  priority?: unknown;
+}
+
+/** An urgent message: `priority: "urgent"` on the message, or a subject that
+ *  starts with URGENT. Such mail must not wait for the end of a turn that can
+ *  run an hour (AEON-3619: a stop-heavy-runs order reached no builder for 45+ min). */
+export function isUrgentMessage(m: UrgentCandidate): boolean {
+  if (typeof m.priority === 'string' && m.priority.trim().toLowerCase() === 'urgent') return true;
+  return /^\s*\[?urgent\b/i.test(m.subject ?? '');
+}
+
+/** The steer note that carries an urgent message into a busy worker's next
+ *  tool boundary. The body rides along so the order lands even if the worker
+ *  never opens its inbox before the turn ends. */
+export function urgentSteerText(m: UrgentCandidate): string {
+  const body = (m.body ?? '').slice(0, 8000);
+  return `URGENT hive message ${m.id} from ${m.from ?? 'unknown'}: ${m.subject ?? ''}\n` +
+    'Act on it now, before you continue your current work, then move it to inbox/.done/.\n\n' + body;
+}
+
 export class WorkerWakeWatchdog {
   /** ptyId → spawn timestamp (boot grace). */
   private spawnedAt = new Map<string, number>();
@@ -256,6 +282,8 @@ export class WorkerWakeWatchdog {
   private lastUnackedAt = new Map<string, number>();
   /** Released wakes not yet collected by the beat's log (takeUnacked). */
   private unacked: UnackedWake[] = [];
+  /** agentId → urgent message ids already queued as a mid-turn steer. */
+  private steeredUrgentIds = new Map<string, Set<string>>();
 
   /** Record a PTY spawn so its boot sequence is left alone. */
   noteSpawn(ptyId: string, at = Date.now()): void {
@@ -309,6 +337,7 @@ export class WorkerWakeWatchdog {
     this.lastPromptAt.delete(agentId);
     this.pendingAcks.delete(agentId);
     this.lastUnackedAt.delete(agentId);
+    this.steeredUrgentIds.delete(agentId);
     if (ptyId) this.spawnedAt.delete(ptyId);
   }
 
@@ -458,6 +487,25 @@ export class WorkerWakeWatchdog {
     if (last > 0 && now - last < WORKER_WAKE_COOLDOWN_MS) return false;
     this.lastHoldReportAt.set(agentId, now);
     return true;
+  }
+
+  /** Urgent messages to push into this worker mid-turn as steer notes (the
+   *  hook channel delivers a steer at the next PostToolUse, so no turn end is
+   *  needed). Each id is returned once; ids no longer in the inbox are
+   *  forgotten. God, a paused, halted or delivery-paused worker gets none.
+   *  Only god (the registry's godId) or the human may interrupt a turn: one
+   *  worker's URGENT subject must not steer another. `from` is trustworthy
+   *  because the router stamps it from the sender's own outbox directory. */
+  takeUrgent<M extends UrgentCandidate>(f: WorkerWakeFacts, mail: readonly M[], godId?: string | null): M[] {
+    if (f.isGod || f.paused || f.halted || f.autoDeliveryPaused) return [];
+    const live = new Set(mail.map((m) => m.id));
+    const seen = this.steeredUrgentIds.get(f.agentId) ?? new Set<string>();
+    for (const id of seen) if (!live.has(id)) seen.delete(id);
+    const god = godId || 'god';
+    const out = mail.filter((m) => m.id && !seen.has(m.id) && (m.from === god || m.from === 'human') && isUrgentMessage(m));
+    for (const m of out) seen.add(m.id);
+    if (seen.size) this.steeredUrgentIds.set(f.agentId, seen); else this.steeredUrgentIds.delete(f.agentId);
+    return out;
   }
 
   /** Last time this worker was nudged (0 = never) — useful for diagnostics. */

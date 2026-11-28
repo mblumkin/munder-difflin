@@ -19,6 +19,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const os = require('node:os');
 const loadTs = require('./load-ts.cjs');
+const seat = require('./seat-env.cjs');
 
 const { PtyManager } = loadTs('src/main/pty.ts');
 
@@ -30,7 +31,7 @@ function waitForExit(mgr) {
   });
 }
 
-test('a SIGILL death forwards the signal and the output that explains it', { skip: !POSIX }, async () => {
+test('a SIGILL death forwards the signal and the output that explains it', { skip: !POSIX || seat.ptySpawn() }, async () => {
   const mgr = new PtyManager();
   const done = waitForExit(mgr);
 
@@ -66,7 +67,7 @@ test('a SIGILL death forwards the signal and the output that explains it', { ski
   assert.ok((info.command ?? '').length > 0, 'the session is deleted before the handler, so command cannot be looked up later');
 });
 
-test('a clean exit reports no signal', { skip: !POSIX }, async () => {
+test('a clean exit reports no signal', { skip: !POSIX || seat.ptySpawn() }, async () => {
   const mgr = new PtyManager();
   const done = waitForExit(mgr);
 
@@ -83,7 +84,7 @@ test('a clean exit reports no signal', { skip: !POSIX }, async () => {
   assert.ok(!info.signal, 'a clean exit must not report a signal');
 });
 
-test('a non-zero exit is reported as a code, not a signal', { skip: !POSIX }, async () => {
+test('a non-zero exit is reported as a code, not a signal', { skip: !POSIX || seat.ptySpawn() }, async () => {
   const mgr = new PtyManager();
   const done = waitForExit(mgr);
 

@@ -41,6 +41,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const loadTs = require('./load-ts.cjs');
+const seat = require('./seat-env.cjs');
 
 const memoryModule = loadTs('src/main/memory.ts');
 const { MemoryManager, readRssKb, startMemoryWatchdog } = memoryModule;
@@ -98,7 +99,7 @@ test('gateHeld is a bare existence check (no liveness parsing)', (t) => {
 
 // — readRssKb (the measurement primitive, not the guard itself) —
 
-test('readRssKb parses a real ps rss= line for the current process', () => {
+test('readRssKb parses a real ps rss= line for the current process', { skip: seat.processTable() }, () => {
   const rssKb = readRssKb(process.pid);
 
   assert.equal(typeof rssKb, 'number');
