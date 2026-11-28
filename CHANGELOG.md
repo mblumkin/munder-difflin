@@ -14,25 +14,67 @@ All notable changes to this project are documented here. The format is based on
   notes lookup and its release links all named chaitanyagiri/munder-difflin, a separate product
   line whose version numbers overlap ours: a release published there could have been offered to
   this install, and "What's new" after an update asked upstream for our version's notes, so it
-  never had any (20 updates in a row in updater.log, from 0.5.3 in September). They now name mblumkin/munder-difflin
-  (AEON-3841).
+  never had any (20 updates in a row in updater.log, from 0.5.3 in September). They now name
+  mblumkin/munder-difflin.
 - A repo with nothing to install is quiet. The fork publishes tags, not installers, so a check
   finds a tag with no update file under it. That now reads as no release, with no warning on the
-  badge; a timeout, a network error or a broken feed still shows "update check failed"
-  (AEON-3841).
+  badge; a timeout, a network error or a broken feed still shows "update check failed".
 - An agent with its own worktree keeps its uncommitted work when it ends. A crash, a circuit
   breaker stop, a Stop and a Restart all removed the worktree with `git worktree remove --force`,
   deleting edits that were not committed yet. A worktree with uncommitted or untracked changes,
   or one git cannot read, is now kept and god is told where it is; a clean one is removed as
-  before, and its commits stay on the agent's branch. Workers already had this rule (AEON-3843).
+  before, and its commits stay on the agent's branch. Workers already had this rule.
 
 ### Added
 
 - Model pickers offer the models upstream added in November: Claude Fable 5.2, GPT-6.1 Sol,
   GPT-6.2 Astra and GPT-6.2 Sol, Grok 4.7, Kimi K3.1 Pro, Qwen 3.5 to 3.7, and the newer
   OpenCode, Crush, Pi and Copilot rows. 125 rows in all, in both the built-in list and the list
-  the app fetches from the fork. The 15 Claude 4.x rows among them were left out, as AEON-2586
-  dropped 4.x from the pickers (AEON-3842).
+  the app fetches from the fork. The 15 Claude 4.x rows among them were left out, as the pickers
+  no longer offer Claude 4.x.
+
+## [0.5.32] - 2026-11-27 (local-only, not a public release)
+
+### Changed
+
+- Urgent mail reaches a busy worker sooner. A message whose subject starts with URGENT, or that
+  is marked urgent, reaches a worker in the middle of a turn at its next tool step instead of
+  waiting for the turn to end. Only god or the person at the keyboard can send one: the router
+  stamps the sender from the outbox it came from, so another worker cannot claim to be god.
+
+### Fixed
+
+- The test suite runs in a sandboxed seat. 24 tests that could only fail there (a refused
+  socket, a write under the home folder, a process list, a terminal spawn) now skip and name what
+  the sandbox refused. On a normal machine the suite is unchanged.
+
+## [0.5.31] - 2026-11-26 (local-only, not a public release)
+
+### Added
+
+- Settings, Autonomy & Budgets has a "Workers at once" field (1 to 16) for how many workers run
+  at the same time. The hive protocol names the limit and says a request waits while that many
+  workers run.
+- A worker nearing its token cap is told at 70% and again at 90%. At the cap it gets a short
+  grace to wrap up and is released as soon as its work is committed and reported. If the grace
+  runs out first, its unfinished work is saved to a local git ref before it is released. Nothing
+  is pushed.
+
+### Fixed
+
+- A worker spawned again under the same id gets its worktree. Git refused the add while the base
+  branch was checked out elsewhere; the respawn now reuses the worker's branch, reset to the base
+  when it holds nothing new and kept as is when it has commits of its own.
+- The router gives an outbox message with an unreadable time the time its file was written, as
+  it already did for a time in the future, and tells the sender. A message the app wrote with no
+  time gets the write time without a notice.
+- The office floor tries to rebuild its graphics every 30 seconds after losing them, so it comes
+  back when the GPU does, without restarting the app.
+- The roster agrees with registry.json on every read and write. An agent archived in one is
+  archived in the other, and a released worker no longer comes back on a roster load or restore.
+- Hive commits no longer start git's automatic cleanup inline, where the commit timeout could
+  kill it. The periodic cleanup runs on its own, with a 10 minute timeout.
+- Two tests no longer fail on a busy machine or a fresh install that skipped setup scripts.
 
 ## [0.5.30] - 2026-11-26 (local-only, not a public release)
 

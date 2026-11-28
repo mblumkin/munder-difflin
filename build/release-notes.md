@@ -1,3 +1,5 @@
-- **The updater asks this fork, and stays quiet when there is nothing to install.**
-- **New Claude and GPT models: Fable 5.2, GPT-6.2 Sol and GPT-6.2 Astra.**
-- **New Grok, Kimi and Qwen models: Grok 4.7, Kimi K3.1 Pro and Qwen 3.7.**
+- **Updates come from this fork, quiet with nothing to install.**
+- **New models: Fable 5.2, GPT-6.2, Grok 4.7, Kimi K3.1 Pro, Qwen 3.7.**
+- **An agent's worktree keeps uncommitted work when it stops.**
+- **Urgent mail reaches a busy worker at its next step.**
+- **Set how many workers run at once in Settings.**
