@@ -30,6 +30,7 @@ import {
   getLogGraph, getCommitFiles, getFileAtRev, compareRefs, listWorktrees, checkoutRef
 } from './git';
 import { linkWorktreeDeps, unlinkWorktreeDeps } from './worktreeDeps';
+import { finalizeAgentWorktree } from './agentWorktree';
 import { HiveManager, type AgentMeta, type HiveMessage, type HiveTask } from './hive';
 import { HookServer } from './hooks';
 import { CircuitBreaker, type BreakerInput } from './breaker';
@@ -492,15 +493,24 @@ function teardownPty(id: string): void {
     // Ephemeral workers get a SAFETY-GATED teardown: never auto-remove a worktree
     // that holds unintegrated work. This sits INSIDE teardownPty so it covers ALL
     // teardown routes — a worker that finished (controller kill), crashed, or was
-    // idle-reaped all land here. Normal agents keep the immediate force-remove.
+    // idle-reaped all land here. Normal agents are gated too (AEON-3843): a crash,
+    // a breaker stop or a Restart keeps a tree with uncommitted work.
     const worker = liveWorkers.get(id);
     if (worker) {
       liveWorkers.delete(id);
       void finalizeWorkerWorktree(wtPath, origCwd, worker);
     } else {
-      void removeWorktree(origCwd, wtPath)
-        .then(r => { if (!r.ok) console.error('[worktree] removeWorktree failed:', r.error); })
-        .catch(e => console.error('[worktree] removeWorktree threw:', e));
+      void finalizeAgentWorktree(wtPath, origCwd)
+        .then(r => {
+          if (r.fate === 'kept') {
+            console.warn(`[worktree] KEPT ${wtPath}: uncommitted work (${r.detail})`);
+            informGod(`[agent worktree kept] ${agentId ?? id}`,
+              `${agentId ?? id} ended with uncommitted work in its worktree, so it was NOT removed.\n`
+              + `Worktree: ${wtPath}\nState: ${r.detail}\n`
+              + `Commit or discard it there, then remove it with: git -C "${origCwd}" worktree remove "${wtPath}"`);
+          } else if (r.fate === 'remove-failed') console.error('[worktree] removeWorktree failed:', r.detail);
+        })
+        .catch(e => console.error('[worktree] finalizeAgentWorktree threw:', e));
     }
   }
   // A worker whose isolation failed (non-repo cwd) has no worktree to gate above —

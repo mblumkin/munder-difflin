@@ -13,6 +13,11 @@ export type UpdateStatus =
   | { state: 'idle' }
   | { state: 'checking' }
   | { state: 'not-available' }
+  /** The repo offers nothing this build can install: no release, or a release
+   *  (a pushed tag counts as one in GitHub's feed) without electron-updater's
+   *  channel file. This fork publishes tags, not installers, so it is the
+   *  normal answer here and stays quiet. */
+  | { state: 'no-release' }
   | { state: 'available'; version: string; notes?: string }
   | { state: 'downloading'; version: string; percent: number }
   | { state: 'downloaded'; version: string; notes?: string }
@@ -33,7 +38,26 @@ export type UpdateStatus =
 
 export type UpdateAction = 'none' | 'check' | 'download' | 'restart' | 'open-release' | 'manual';
 
-export const REPO = 'chaitanyagiri/munder-difflin';
+export const REPO = 'mblumkin/munder-difflin';
+
+/** electron-updater's codes for "nothing to install here". Anything else, a
+ *  timeout or a network error included, is a real failure and stays loud. */
+const NO_RELEASE_CODES = new Set([
+  'ERR_UPDATER_NO_PUBLISHED_VERSIONS',
+  'ERR_UPDATER_CHANNEL_FILE_NOT_FOUND',
+  'ERR_UPDATER_LATEST_VERSION_NOT_FOUND'
+]);
+
+/** Did a check fail only because the repo has no installable release? An
+ *  empty feed throws the XML helper's ERR_XML_MISSED_ELEMENT, so that one is
+ *  matched by electron-updater's own message for it. */
+export function isNoReleaseError(e: unknown): boolean {
+  if (!(e instanceof Error)) return false;
+  const code = (e as { code?: unknown }).code;
+  if (typeof code !== 'string') return false;
+  if (NO_RELEASE_CODES.has(code)) return true;
+  return code === 'ERR_XML_MISSED_ELEMENT' && e.message.startsWith('No published versions on GitHub');
+}
 
 /** The installer for THIS machine in the release tagged v{version}, by the
  *  names electron-builder.yml produces. Used when a status carries no
@@ -135,6 +159,7 @@ function rank(s: UpdateStatus): number {
     case 'idle': return 0;
     case 'checking': return 1;
     case 'not-available': return 1;
+    case 'no-release': return 1;
     case 'error': return 1;
     case 'just-updated': return 1;
     case 'available-manual': return 2;

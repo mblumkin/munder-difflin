@@ -1,3 +1,5 @@
-- **Workers running when the app restarts are managed again.**
-- **A new worker's worktree gets packages it can run its tests with.**
-- **The agent shell says when no Node matches .nvmrc.**
+- **Updates come from this fork, quiet with nothing to install.**
+- **New models: Fable 5.2, GPT-6.2, Grok 4.7, Kimi K3.1 Pro, Qwen 3.7.**
+- **An agent's worktree keeps uncommitted work when it stops.**
+- **Urgent mail reaches a busy worker at its next step.**
+- **Set how many workers run at once in Settings.**

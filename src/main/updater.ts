@@ -5,7 +5,7 @@ import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path';
 import { readConfig } from './config';
 import { DEFAULT_DROP_HTML } from '../shared/releaseDrop';
-import { reduceStatus, clampPercent, isNewer, installerUrl, shouldShowReleaseDrop, type UpdateStatus } from '../shared/updateState';
+import { reduceStatus, clampPercent, isNewer, installerUrl, shouldShowReleaseDrop, isNoReleaseError, REPO, type UpdateStatus } from '../shared/updateState';
 
 /**
  * Auto-update from GitHub releases.
@@ -44,7 +44,6 @@ import { reduceStatus, clampPercent, isNewer, installerUrl, shouldShowReleaseDro
  *      downgrade is per-check, not a permanent latch.
  */
 
-const REPO = 'chaitanyagiri/munder-difflin';
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6h
 const FALLBACK_CACHE_MS = 60 * 60 * 1000;     // 1h between releases/latest polls
 
@@ -308,6 +307,13 @@ async function runCheck(): Promise<{ ok: boolean; error?: string }> {
     return { ok: true };
   } catch (e) {
     const message = errText(e);
+    if (isNoReleaseError(e)) {
+      logLine(`no installable release at ${REPO}: ${message}`);
+      emit({ state: 'no-release' });
+      // A release without installers can still be offered by hand.
+      fallbackCheck(message);
+      return { ok: true };
+    }
     logLine(`native check failed: ${message}`);
     emit({ state: 'error', message });
     fallbackCheck(message);
@@ -526,6 +532,9 @@ export function initAutoUpdater(getWebContents: () => WebContents | null): void 
         emit({ state: 'downloaded', version: info.version, notes: typeof info.releaseNotes === 'string' ? info.releaseNotes : undefined });
       });
       autoUpdater.on('error', (err) => {
+        // electron-updater reports a failed check here AND rejects checkForUpdates;
+        // runCheck's catch already reported the no-release case quietly.
+        if (isNoReleaseError(err)) return;
         const message = errText(err);
         logLine(`native updater error: ${message}`);
         emit({ state: 'error', message });

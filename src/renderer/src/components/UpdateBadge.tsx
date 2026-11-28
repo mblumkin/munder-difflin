@@ -64,7 +64,7 @@ export function UpdateBadge() {
         if (res?.ok) {
           const cur = await window.cth.updateCurrent?.();
           const st = cur?.state;
-          if (!st || st === 'not-available' || st === 'idle' || st === 'just-updated') setCheckedOk(true);
+          if (!st || st === 'not-available' || st === 'no-release' || st === 'idle' || st === 'just-updated') setCheckedOk(true);
         }
       }
       else if (view.action === 'download') await window.cth.updateDownload();
